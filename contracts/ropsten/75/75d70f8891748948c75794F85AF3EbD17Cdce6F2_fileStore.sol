@@ -1,0 +1,105 @@
+pragma solidity ^0.8.0;
+pragma experimental ABIEncoderV2;
+
+import "@openzeppelin/contracts-upgradeable/utils/CountersUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC721/extensions/ERC721URIStorageUpgradeable.sol";
+
+library SafeMath {
+  function mul(uint256 a, uint256 b) internal pure returns (uint256) {
+    uint256 c = a * b;
+    assert(a == 0 || c / a == b);
+    return c;
+  }
+
+  function div(uint256 a, uint256 b) internal pure returns (uint256) {
+    uint256 c = a / b;
+    return c;
+  }
+
+  function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+    assert(b <= a);
+    return a - b;
+  }
+
+  function add(uint256 a, uint256 b) internal pure returns (uint256) {
+    uint256 c = a + b;
+    assert(c >= a);
+    return c;
+  }
+}
+
+contract owned {
+        address public owner;
+
+        constructor() {
+            owner = msg.sender;
+        }
+
+        modifier onlyOwner {
+            require(msg.sender == owner);
+            _;
+        }
+
+        function transferOwnership(address newOwner) onlyOwner public {
+            owner = newOwner;
+        }
+}
+
+contract fileStore is ERC721URIStorageUpgradeable, owned {
+    
+    using SafeMath for uint256;
+
+    /*
+     * vars
+    */
+    struct Items {
+        string issuerName;
+        address ownerId;
+        string fileHash;
+        string linkedTo;
+    }
+    
+    string[] public allFiles;
+    mapping (string => Items) public userFiles;
+    /*
+     * init
+    */
+    constructor() public {}
+
+    /*Add file*/
+    function uploadCert(string memory _id, string memory _fileHash, address _ownerId, string memory _issuerName) public onlyOwner {
+        
+        userFiles[_id].issuerName = _issuerName;
+        userFiles[_id].ownerId = _ownerId;
+        userFiles[_id].fileHash = _fileHash;
+        userFiles[_id].linkedTo = "None";
+        allFiles.push(_id);
+        uint256 userFilesID = allFiles.length - 1;
+        _mint(msg.sender, userFilesID);
+    }
+    
+    /*Transfer file*/
+    function TransferCert(string memory _id, string memory linkedId, address _receiverID) public onlyOwner {
+        
+        userFiles[_id].issuerName = userFiles[linkedId].issuerName;
+        userFiles[_id].ownerId = _receiverID;
+        userFiles[_id].fileHash = userFiles[linkedId].fileHash;
+        userFiles[_id].linkedTo = linkedId;
+        allFiles.push(_id);
+        uint256 userFID = allFiles.length - 1;
+        safeTransferFrom(msg.sender, _receiverID, userFID);
+    }
+    
+    /*get file details by id*/
+    function getUserFileDetails(string memory _id) view public returns (string memory, address, string memory, string memory)
+    {
+        return ( userFiles[_id].issuerName, userFiles[_id].ownerId, userFiles[_id].fileHash, userFiles[_id].linkedTo);
+    }
+    
+    /*get all files*/
+    function getAllUserFiles() view public returns (string[] memory )
+    {
+        return allFiles;
+    }
+
+}
