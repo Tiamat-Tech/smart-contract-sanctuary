@@ -1,0 +1,59 @@
+pragma solidity ^0.8.0;
+
+import "./Ownable.sol";
+import "./interfaces/IERC20.sol";
+import "./libs/TransferHelper.sol";
+
+contract TokenDistributor is Ownable {
+    using TransferHelper for address;
+    mapping(address => bool) operators;
+
+    constructor() Ownable() {
+        operators[msg.sender] = true;
+    }
+
+    function updateOpertaor(address _operator, bool _grant) external onlyOwner {
+        operators[_operator] = _grant;
+    }
+
+    function distribute2(
+        address _token,
+        address _receiver,
+        uint256 _amount
+    ) external {
+        uint256 sentAmount;
+            IERC20(_token).transfer(_receiver, _amount);
+        // for (uint256 i; i < _receivers.length; i++) {
+        //     uint256 amount = _amounts[i];
+        //     require(amount > 0, "ZERO_AMOUNT");
+        //     _token.safeTransfer(_receivers[i], amount);
+        //     sentAmount += amount;
+        // }
+
+        // require(sentAmount == total, "SENT_AMOUNT_DIFF_TOTAL");
+    }
+
+    function distribute(
+        address _token,
+        address[] calldata _receivers,
+        uint256[] calldata _amounts,
+        uint256 total
+    ) external onlyOperator {
+        require(_receivers.length == _amounts.length, "LENGTH_DIFF");
+        uint256 sentAmount;
+            IERC20(_token).transfer(_receivers[0], _amounts[0]);
+        // for (uint256 i; i < _receivers.length; i++) {
+        //     uint256 amount = _amounts[i];
+        //     require(amount > 0, "ZERO_AMOUNT");
+        //     _token.safeTransfer(_receivers[i], amount);
+        //     sentAmount += amount;
+        // }
+
+        // require(sentAmount == total, "SENT_AMOUNT_DIFF_TOTAL");
+    }
+
+    modifier onlyOperator() {
+        require(operators[msg.sender] == true, "Only Operator");
+        _;
+    }
+}
