@@ -1,0 +1,194 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.7.4;
+pragma experimental ABIEncoderV2;
+
+import "@openzeppelin/contracts/utils/EnumerableSet.sol";
+import "@openzeppelin/contracts/math/Math.sol";
+import "@openzeppelin/contracts/math/SafeMath.sol";
+
+import "./interfaces/IPolicyBook.sol";
+import "./interfaces/IPolicyBookRegistry.sol";
+import "./interfaces/IContractsRegistry.sol";
+
+import "./abstract/AbstractDependant.sol";
+
+contract PolicyBookRegistry is IPolicyBookRegistry, AbstractDependant {
+    using Math for uint256;
+    using SafeMath for uint256;
+    using EnumerableSet for EnumerableSet.AddressSet;
+
+    address public policyBookFabricAddress;
+
+    // insured contract address => proxy address
+    mapping(address => address) public policyBooksByInsuredAddress;
+    EnumerableSet.AddressSet private _policyBooks;
+
+    event Added(address insured, address at);
+
+    modifier onlyPolicyBookFabric() {
+        require(
+            msg.sender == policyBookFabricAddress,
+            "PolicyBookRegistry: Not a PolicyBookFabric"
+        );
+        _;
+    }
+
+    function setDependencies(IContractsRegistry _contractsRegistry)
+        external
+        override
+        onlyInjectorOrZero
+    {
+        policyBookFabricAddress = _contractsRegistry.getPolicyBookFabricContract();
+    }
+
+    function add(address insuredContract, address policyBook)
+        external
+        override
+        onlyPolicyBookFabric
+    {
+        require(
+            policyBooksByInsuredAddress[insuredContract] == address(0),
+            "PolicyBookRegistry: PolicyBook for the contract is already created"
+        );
+
+        _policyBooks.add(policyBook);
+        policyBooksByInsuredAddress[insuredContract] = policyBook;
+
+        emit Added(insuredContract, policyBook);
+    }
+
+    function getPoliciesPrices(
+        address[] calldata policyBooks,
+        uint256[] calldata epochsNumbers,
+        uint256[] calldata coversTokens
+    ) external view override returns (uint256[] memory _durations, uint256[] memory _allowances) {
+        require(
+            policyBooks.length == epochsNumbers.length &&
+                policyBooks.length == coversTokens.length,
+            "PolicyBookRegistry: Lengths mismatch"
+        );
+
+        _durations = new uint256[](policyBooks.length);
+        _allowances = new uint256[](policyBooks.length);
+
+        for (uint256 i = 0; i < policyBooks.length; i++) {
+            require(isPolicyBook(policyBooks[i]), "PolicyBookRegistry: Not a PolicyBook");
+
+            (_durations[i], _allowances[i]) = IPolicyBook(policyBooks[i]).getPolicyPrice(
+                epochsNumbers[i],
+                coversTokens[i]
+            );
+        }
+    }
+
+    function buyPolicyBatch(
+        address[] calldata policyBooks,
+        uint256[] calldata epochsNumbers,
+        uint256[] calldata coversTokens
+    ) external override {
+        require(
+            policyBooks.length == epochsNumbers.length &&
+                policyBooks.length == coversTokens.length,
+            "PolicyBookRegistry: Lengths mismatch"
+        );
+
+        for (uint256 i = 0; i < policyBooks.length; i++) {
+            require(isPolicyBook(policyBooks[i]), "PolicyBookRegistry: Not a PolicyBook");
+
+            IPolicyBook(policyBooks[i]).buyPolicyFor(
+                msg.sender,
+                epochsNumbers[i],
+                coversTokens[i]
+            );
+        }
+    }
+
+    function isPolicyBook(address policyBook) public view override returns (bool) {
+        return _policyBooks.contains(policyBook);
+    }
+
+    function count() external view override returns (uint256) {
+        return _policyBooks.length();
+    }
+
+    function list(uint256 offset, uint256 limit)
+        public
+        view
+        override
+        returns (address[] memory _policyBooksArr)
+    {
+        uint256 to = (offset.add(limit)).min(_policyBooks.length()).max(offset);
+
+        _policyBooksArr = new address[](to - offset);
+
+        for (uint256 i = offset; i < to; i++) {
+            _policyBooksArr[i - offset] = _policyBooks.at(i);
+        }
+    }
+
+    function listWithStats(uint256 offset, uint256 limit)
+        external
+        view
+        override
+        returns (address[] memory _policyBooksArr, PolicyBookStats[] memory _stats)
+    {
+        _policyBooksArr = list(offset, limit);
+        _stats = stats(_policyBooksArr);
+    }
+
+    function policyBookFor(address insuredContract) external view override returns (address) {
+        return policyBooksByInsuredAddress[insuredContract];
+    }
+
+    function stats(address[] memory policyBooks)
+        public
+        view
+        override
+        returns (PolicyBookStats[] memory _stats)
+    {
+        _stats = new PolicyBookStats[](policyBooks.length);
+
+        for (uint256 i = 0; i < policyBooks.length; i++) {
+            (
+                _stats[i].symbol,
+                _stats[i].insuredContract,
+                _stats[i].contractType,
+                _stats[i].whitelisted
+            ) = IPolicyBook(policyBooks[i]).info();
+
+            (
+                _stats[i].maxCapacity,
+                _stats[i].totalDaiLiquidity,
+                _stats[i].stakedDAI,
+                _stats[i].APY,
+                _stats[i].annualInsuranceCost
+            ) = IPolicyBook(policyBooks[i]).numberStats();
+        }
+    }
+
+    function statsByInsuredContracts(address[] calldata insuredContracts)
+        external
+        view
+        override
+        returns (PolicyBookStats[] memory _stats)
+    {
+        _stats = new PolicyBookStats[](insuredContracts.length);
+
+        for (uint256 i = 0; i < insuredContracts.length; i++) {
+            (
+                _stats[i].symbol,
+                _stats[i].insuredContract,
+                _stats[i].contractType,
+                _stats[i].whitelisted
+            ) = IPolicyBook(policyBooksByInsuredAddress[insuredContracts[i]]).info();
+
+            (
+                _stats[i].maxCapacity,
+                _stats[i].totalDaiLiquidity,
+                _stats[i].stakedDAI,
+                _stats[i].APY,
+                _stats[i].annualInsuranceCost
+            ) = IPolicyBook(policyBooksByInsuredAddress[insuredContracts[i]]).numberStats();
+        }
+    }
+}
