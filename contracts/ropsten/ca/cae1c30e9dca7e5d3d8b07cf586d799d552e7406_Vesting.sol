@@ -1,0 +1,300 @@
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+
+import '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/utils/math/MathUpgradeable.sol';
+import '@uniswap/lib/contracts/libraries/TransferHelper.sol';
+import '@openzeppelin/contracts/token/ERC20/IERC20.sol';
+import './interfaces/IStakingV1.sol';
+import './interfaces/IStakingV2.sol';
+import './abstracts/Manageable.sol';
+import './abstracts/Migrateable.sol';
+
+import 'hardhat/console.sol';
+
+contract Vesting is AccessControlUpgradeable, Manageable, Migrateable {
+    event ItemCreated(address indexed token, uint256 amount);
+
+    struct Vested {
+        // 1 words?
+        uint104 amount;
+        uint104 totalWithdrawn;
+        uint8 percentInitial;
+        uint8 percentAmountPerWithdraw;
+        uint8 percentBonus;
+        uint8 withdrawals;
+        uint8 status;
+        bool bonusWithdrawn;
+    }
+
+    struct Item {
+        address token;
+        string name;
+        uint256 amount;
+        uint256 startTime;
+        uint256 cliffTime;
+        uint256 timeBetweenUnlocks;
+        uint256 bonusUnlockTime;
+    }
+
+    struct VestedItem {
+        Vested record;
+        Item item;
+    }
+
+    mapping(address => mapping(string => Vested)) public records;
+    mapping(address => string[]) userVests;
+    mapping(string => Item) public items;
+    string[] internal names;
+
+    function addItem(
+        address _token,
+        string memory _name,
+        uint256 _amount,
+        uint256 _startTime,
+        uint256 _cliffTime,
+        uint256 _timeBetweenUnlocks,
+        uint256 _bonusUnlockTime
+    ) external onlyManager {
+        TransferHelper.safeTransferFrom(address(_token), msg.sender, address(this), _amount);
+
+        names.push(_name);
+        items[_name] = Item({
+            token: _token,
+            name: _name,
+            amount: _amount,
+            startTime: _startTime,
+            cliffTime: _cliffTime,
+            timeBetweenUnlocks: _timeBetweenUnlocks,
+            bonusUnlockTime: _bonusUnlockTime
+        });
+
+        emit ItemCreated(_token, _amount);
+    }
+
+    function addVester(
+        string memory _name,
+        address _vester,
+        uint8 _percentInitialAmount,
+        uint8 _percentAmountPerWithdraw,
+        uint8 _percentBonus,
+        uint104 _amount
+    ) public onlyManager {
+        userVests[_vester].push(_name);
+        records[_vester][_name] = Vested({
+            amount: _amount,
+            totalWithdrawn: 0,
+            percentAmountPerWithdraw: _percentAmountPerWithdraw,
+            percentInitial: _percentInitialAmount,
+            percentBonus: _percentBonus,
+            withdrawals: 0,
+            status: 0,
+            bonusWithdrawn: false
+        });
+    }
+
+    function addMultipleVesters(
+        string[] calldata _name,
+        address[] calldata _vester,
+        uint104[] calldata _amount,
+        uint8[] calldata _percentInitialAmount,
+        uint8[] calldata _percentAmountPerWithdraw,
+        uint8[] calldata _percentBonus
+    ) external onlyManager {
+        for (uint256 i = 0; i < _name.length; i++) {
+            addVester(
+                _name[i],
+                _vester[i],
+                _percentInitialAmount[i],
+                _percentAmountPerWithdraw[i],
+                _percentBonus[i],
+                _amount[i]
+            );
+        }
+    }
+
+    // function getMessageHash(uint256 amount, address account) public pure returns (bytes32) {
+    //     return keccak256(abi.encode(amount, account));
+    // }
+
+    // function check(uint256 amount, bytes memory signature) public view returns (bool) {
+    //     bytes32 messageHash = getMessageHash(amount, address(msg.sender));
+    //     // return ECDSA.recover(messageHash, signature) == signerAddress;
+    //     return true;
+    // }
+
+    // function addVesterCryptography(
+    //     bytes memory signature,
+    //     string memory _name,
+    //     address _vester,
+    //     uint8 _percentInitialAmount,
+    //     uint8 _percentAmountPerWithdraw,
+    //     uint8 _percentBonus,
+    //     uint104 _amount
+    // ) external {
+    //     userVests[_vester].push(_name);
+    //     records[_vester][_name] = Vested({
+    //         amount: _amount,
+    //         totalWithdrawn: 0,
+    //         percentAmountPerWithdraw: _percentAmountPerWithdraw,
+    //         percentInitial: _percentInitialAmount,
+    //         percentBonus: _percentBonus,
+    //         withdrawals: 0,
+    //         bonusWithdrawn: false
+    //     });
+    // }
+
+    function withdraw(string memory name) external {
+        Item memory record = items[name];
+        Vested storage userRecord = records[msg.sender][name];
+        require(userRecord.amount != 0, 'VESTING: User Record does not exist');
+
+        // Initial withdraw */
+        if (userRecord.withdrawals == 0) {
+            userRecord.withdrawals++;
+            // Ensure initial withdraw is allowed */
+            // console.log('Start time %s', record.startTime);
+            require(record.startTime < block.timestamp, 'VESTING: Has not begun yet');
+
+            // Get amount to withdraw with some percentage magic */
+            uint256 amountToWithdraw =
+                (uint256(userRecord.percentInitial) * uint256(userRecord.amount)) / 100;
+
+            // set withdrawn first */
+            userRecord.totalWithdrawn += uint104(amountToWithdraw);
+
+            // Ensure our managers aren't allowing users to get more then they should */
+            require(
+                userRecord.totalWithdrawn < userRecord.amount,
+                'VESTING: Exceeds allowed amount'
+            );
+
+            // Finally transfer and call it a day */
+            IERC20(record.token).transfer(msg.sender, amountToWithdraw);
+        } else {
+            // Ensure time started */
+
+            // console.log('Start time + cliff time %s', record.startTime + record.cliffTime);
+            require(
+                record.startTime + record.cliffTime < block.timestamp,
+                'VESTING: Withdrawal not allowed at this time'
+            );
+
+            uint256 maxNumberOfWithdrawals =
+                ((100 - userRecord.percentInitial) / userRecord.percentAmountPerWithdraw) + 1; //example for 15% initial and 17% for 5 months, the max number will end up being 6
+
+            // Get number of allowed withdrawals by doing some date magic */
+            uint256 numberOfAllowedWithdrawals =
+                ((block.timestamp - (record.startTime + record.cliffTime)) /
+                    record.timeBetweenUnlocks) + 1; // add one for initial withdraw
+
+            numberOfAllowedWithdrawals = MathUpgradeable.min(
+                numberOfAllowedWithdrawals,
+                maxNumberOfWithdrawals
+            );
+            // Ensure the amount of withdrawals a user has is less then numberOfAllowed */
+            uint256 withdrawalsToPay = numberOfAllowedWithdrawals - userRecord.withdrawals;
+
+            require(withdrawalsToPay != 0, 'VESTING: No withdrawals to pay at this time');
+
+            uint256 amountToWithdraw =
+                ((uint256(userRecord.percentAmountPerWithdraw) * uint256(userRecord.amount)) /
+                    100) * withdrawalsToPay;
+
+            // Get amount to withdraw with some percentage magic */
+            // uint256 amountToWithdraw =
+            //     (uint256(userRecord.percentAmountPerWithdraw) * uint256(userRecord.amount)) / 100;
+
+            // set withdrawn first */
+            userRecord.totalWithdrawn += uint104(amountToWithdraw);
+            userRecord.withdrawals += uint8(withdrawalsToPay);
+
+            // Finally transfer and call it a day */
+            IERC20(record.token).transfer(msg.sender, amountToWithdraw);
+        }
+    }
+
+    function bonus(string memory name) external {
+        Item memory record = items[name];
+        Vested storage userRecord = records[msg.sender][name];
+
+        require(record.bonusUnlockTime < block.timestamp, 'VESTING: Bonus is not unlocked yet');
+        require(userRecord.bonusWithdrawn == false, 'VESTING: Bonus already withdrawn');
+
+        userRecord.bonusWithdrawn = true;
+
+        // Withdraw bonus
+        IERC20(record.token).transfer(
+            msg.sender,
+            (uint256(userRecord.percentBonus) * uint256(userRecord.amount)) / 100
+        );
+    }
+
+    // Getters && Setters ------------------------------------------------------------------ */
+    function getNamesLength() public view returns (uint256) {
+        return names.length;
+    }
+
+    function getNames(uint256 from, uint256 to) public view returns (string[] memory) {
+        string[] memory _names = new string[](to - from);
+
+        uint256 count = 0;
+        for (uint256 i = from; i < to; i++) {
+            _names[count] = names[i];
+            count++;
+        }
+
+        return _names;
+    }
+
+    function getItems(uint256 from, uint256 to) public view returns (Item[] memory) {
+        Item[] memory _items = new Item[](to - from);
+
+        uint256 count = 0;
+        for (uint256 i = from; i < to; i++) {
+            _items[count] = items[names[i]];
+            count++;
+        }
+
+        return _items;
+    }
+
+    function getAllItems() public view returns (Item[] memory) {
+        uint256 length = getNamesLength();
+
+        Item[] memory _items = new Item[](length);
+
+        for (uint256 i = 0; i < length; i++) {
+            _items[i] = items[names[i]];
+        }
+
+        return _items;
+    }
+
+    function getUserVestsLength(address user) external view returns (uint256) {
+        return userVests[user].length;
+    }
+
+    function getUserItems(
+        address user,
+        uint256 from,
+        uint256 to
+    ) public view returns (VestedItem[] memory) {
+        VestedItem[] memory _items = new VestedItem[](to - from);
+        string[] memory keys = userVests[user];
+
+        uint256 count = 0;
+        for (uint256 i = from; i < to; i++) {
+            _items[count].item = items[keys[i]];
+            _items[count].record = records[user][keys[i]];
+        }
+
+        return _items;
+    }
+
+    // Initialize ------------------------------------------------------------------ */
+    function initialize(address _manager, address _migrator) external initializer {
+        _setupRole(MANAGER_ROLE, _manager);
+        _setupRole(MIGRATOR_ROLE, _migrator);
+    }
+}
