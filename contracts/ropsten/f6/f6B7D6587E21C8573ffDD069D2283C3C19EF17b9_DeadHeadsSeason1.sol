@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.7.0;
+
+import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
+
+abstract contract DeadHeads {
+  function ownerOf(uint tokenId) public virtual view returns (address);
+  function balanceOf(address owner) external virtual view returns (uint balance);
+}
+
+abstract contract DeadTickets {
+  function ownerOf(uint tokenId) public virtual view returns (address);
+  function balanceOf(address owner) external virtual view returns (uint balance);
+  function isApprovedForAll(address _owner, address _operator) external virtual view returns (bool);
+  function burn(uint tokenId) public virtual;
+}
+
+contract DeadHeadsSeason1 is ERC1155, AccessControl {
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    uint public burnedTickets = 0;
+    uint public totalItems;
+    uint public maxTicketId;
+
+    DeadHeads _deadHeads;
+    DeadTickets _deadTickets;
+
+    enum ItemType { EP, ASSET }
+    struct Item {
+        uint itemId;
+        uint ticketsToBurn;
+        uint maxSupply;
+        ItemType itemType;
+    }
+    
+    mapping(address => mapping(uint => bool)) public mintedEpisodes;
+    mapping(uint => Item) public items;
+    mapping(uint => uint) public totalSupply;
+
+    modifier onlyAdmin() {
+        require(hasRole(ADMIN_ROLE, msg.sender), "Restricted to admins.");
+        _;
+    }
+
+    constructor() ERC1155("https://metadata.com/{id}.json") {
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _deadHeads = DeadHeads(0xB2F829b80A0e5a34AdA3c93b4b10fFaFDb21e355);
+        _deadTickets = DeadTickets(0x44e59E3F22B7BbcF9e45996a292316b873aE5Ca0);
+        maxTicketId = 100;
+    }
+
+    function _burnTickets(uint[] memory ticketsToBurn) internal {
+        require(_deadTickets.isApprovedForAll(msg.sender, address(this)), "contract not approved");
+        for (uint i = 0; i < ticketsToBurn.length; i++) {
+            require(maxTicketId <= ticketsToBurn[i], "ticket id not allowed yet");
+            require(_deadTickets.ownerOf(ticketsToBurn[i]) == msg.sender, "sender does not have this ticket");
+        }
+
+        for (uint i = 0; i < ticketsToBurn.length; i++) {
+            _deadTickets.burn(ticketsToBurn[i]);
+        }
+    }
+
+    function hasDeadHeads(address _owner) public view returns (bool) {
+        return _deadHeads.balanceOf(_owner) > 0;
+    }
+
+    function mintItem(uint itemId, uint[] memory ticketsToBurn) public {
+        require(totalItems > itemId, "item does not exists");
+        Item storage item = items[itemId];
+        require(item.itemType == ItemType.ASSET || hasDeadHeads(msg.sender), "caller does not have dead heads");
+        require(item.maxSupply == 0 || totalSupply[itemId] < item.maxSupply, "item sold out");
+        require(item.ticketsToBurn == ticketsToBurn.length, "required tickets to burn different from sent");
+        
+        _burnTickets(ticketsToBurn);
+        burnedTickets += item.ticketsToBurn;
+        _mint(msg.sender, itemId, 1, "");
+    }
+
+    function createItem(uint ticketsToBurn, uint maxSupply, ItemType itemType) public onlyAdmin returns (uint) {
+        uint index = totalItems;
+        items[index] = Item(index, ticketsToBurn, maxSupply, itemType);
+        totalItems++;
+        return index;
+    }
+
+    function updateItemTicketsToBurn(uint itemId, uint ticketsToBurn) public onlyAdmin {
+        require(totalItems > itemId, "item does not exist");
+        items[itemId].ticketsToBurn = ticketsToBurn;
+    }
+
+    function updateItemMaxSupply(uint itemId, uint maxSupply) public onlyAdmin {
+        require(totalItems > itemId, "item does not exist");
+        items[itemId].maxSupply = maxSupply;
+    }
+
+    function setURI(string memory newURI) external onlyAdmin {
+        super._setURI(newURI);
+    }
+
+    function setMaxTicketId(uint _maxTicketId) external onlyAdmin {
+        maxTicketId = _maxTicketId;
+    }
+
+    function addAdmin(address account) public virtual onlyAdmin {
+        grantRole(ADMIN_ROLE, account);
+    }
+
+    function removeAdmin(address account) public virtual onlyAdmin {
+        renounceRole(ADMIN_ROLE, account);
+    }
+}
