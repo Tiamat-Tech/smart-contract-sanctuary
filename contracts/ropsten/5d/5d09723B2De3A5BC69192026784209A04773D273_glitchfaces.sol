@@ -1,0 +1,73 @@
+// contracts/blockfaces.sol
+// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.7.0;
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "contracts/blockfaces.sol";
+
+// Inspired/Copied fromm BAKC
+
+contract glitchfaces is ERC721, Ownable {
+    
+    blockfaces private blockface;
+    using SafeMath for uint256;
+    bool public hasSaleStarted = false;
+    
+    // The IPFS hash
+    string public METADATA_PROVENANCE_HASH = "";
+
+    // Truth?　
+    string public constant R = "glitchfaces - glitch with me";
+
+    constructor(string memory baseURI) ERC721("glitchfaces","GFACES")  {
+        setBaseURI(baseURI);        
+    }
+    
+    function walletOfOwner(address _owner) public view returns(uint256[] memory) {
+        uint256 tokenCount = balanceOf(_owner);
+
+        uint256[] memory tokensId = new uint256[](tokenCount);
+        for(uint256 i; i < tokenCount; i++){
+            tokensId[i] = tokenOfOwnerByIndex(_owner, i);
+        }
+        return tokensId;
+    }
+
+    function glitchmyface() public {
+        uint256[] memory blockfaceids;
+        blockfaceids = blockface.walletOfOwner(msg.sender);
+        uint256 balance = blockfaceids.length;
+        require(hasSaleStarted,                         "sale is paused");
+        require(balance > 0,                            "need at least 1 blockface");
+        
+        for(uint256 i; i < balance; i++){
+            uint256 tokenid = blockfaceids[i];
+            if (!_exists(tokenid)){
+                _safeMint(msg.sender, tokenid);
+            }
+        }
+    }
+    
+    // God Mode
+    function setProvenanceHash(string memory _hash) public onlyOwner {
+        METADATA_PROVENANCE_HASH = _hash;
+    }
+    
+    function setBaseURI(string memory baseURI) public onlyOwner {
+        _setBaseURI(baseURI);
+    }
+    
+    function startSale() public onlyOwner {
+        hasSaleStarted = true;
+    }
+    function pauseSale() public onlyOwner {
+        hasSaleStarted = false;
+    }
+    
+    function withdrawAll() public payable onlyOwner {
+        require(payable(msg.sender).send(address(this).balance));
+    }
+
+}
