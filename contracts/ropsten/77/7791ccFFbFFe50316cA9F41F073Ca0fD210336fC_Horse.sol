@@ -1,0 +1,506 @@
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.4;
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+
+error HorseError();
+
+contract Horse is ERC721Enumerable, Ownable {
+    using SafeMath for uint256;
+
+    string public breed = "";
+    string public skill = "";
+    string public barding = "";
+    string public horseShoe = "";
+    uint256 public speed = 0;
+    uint256 public brake = 0;
+    uint256 public hp = 0;
+    uint256 public stam = 0;
+
+    uint256 public constant MAX_HORSE_SUPPLY = 8000;
+    uint256 public horsePrice = 0.001 * 10**18; // 0.001ETH
+    uint256 public constant maxHorsePurcahse = 20;
+
+    function random(string memory input) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encodePacked(input)));
+    }
+
+    function toString(uint256 value) internal pure returns (string memory) {
+        // Inspired by OraclizeAPI's implementation - MIT license
+        // https://github.com/oraclize/ethereum-api/blob/b42146b063c7d6ee1358846c198246239e9360e8/oraclizeAPI_0.4.25.sol
+
+        if (value == 0) {
+            return "0";
+        }
+        uint256 temp = value;
+        uint256 digits;
+        while (temp != 0) {
+            digits++;
+            temp /= 10;
+        }
+        bytes memory buffer = new bytes(digits);
+        while (value != 0) {
+            digits -= 1;
+            buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
+            value /= 10;
+        }
+        return string(buffer);
+    }
+
+    function getPrice() public view returns (uint256) {
+        return horsePrice;
+    }
+
+    function mintHorse(uint256 numberOfHorses) public payable {
+        require(totalSupply() < MAX_HORSE_SUPPLY, "Sale has already ended");
+        require(numberOfHorses > 0, "numberOfHorses cannot be 0");
+        require(numberOfHorses <= maxHorsePurcahse, "You may not buy more than 20 horses at once");
+        require(totalSupply().add(numberOfHorses) <= MAX_HORSE_SUPPLY, "Exceeds MAX_HORSE_SUPPLY");
+        require(getPrice().mul(numberOfHorses) == msg.value, "Ether value sent is not correct");
+
+        for (uint i = 0; i < numberOfHorses; i++) {
+           uint256 mintIndex = totalSupply();
+            if (totalSupply() < MAX_HORSE_SUPPLY) {
+                _safeMint(msg.sender, mintIndex);
+            }
+        }
+    }
+
+    constructor() ERC721("Horse (for Adventurers)", "HORSE") {
+    }
+
+    string[] private breeds = [
+        "Thoroughbred",
+        "Dutch Warmblood",
+        "Selle Francais",
+        "Standardbred",
+        "Friesian",
+        "Hanovarian",
+        "Oldenburg",
+        "Arabian",
+        "Holsteiner",
+        "Andalusian",
+        "Gypsy Vanner",
+        "Quarter Horse",
+        "Morgan",
+        "Mustang",
+        "Appaloosa",
+        "American Paint",
+        "Tennessee Walker",
+        "Clydesdale",
+        "Lipizzaner"
+    ];
+
+    string[] private skills = [
+        "Charge",
+        "Drift",
+        "Fore Chop",
+        "High Jump",
+        "Hind Kick",
+        "Instant Accel",
+        "Quick Back",
+        "Quick Ride",
+        "Quick Stop",
+        "Roar",
+        "Sideways",
+        "Sprint",
+        "Start Accel",
+        "Streak Leap",
+        "Two-seater",
+        "Earth of Life",
+        "Earth of Protection",
+        "Wings of Wind",
+        "Wings of Freedom",
+        "Dark Flame Steps",
+        "Dark Sprint"
+    ];
+
+    string[] private bardings = [
+        "Weak Iron Champron",
+        "Light Iron Champron",
+        "Light Steel Champron",
+        "Steel Combat Champron",
+        "Steel Champron"
+    ];
+
+    string[] private stirrups = [
+        "Light Hide Stirrups",
+        "Light Leather Stirrups",
+        "Leather Combat Stirrups",
+        "Leather Stirrups",
+        "Granverre Leather Stirrups"
+    ];
+
+    string[] private horseShoes = [
+        "Light Iron Horseshoe",
+        "Light Steel Horseshoe",
+        "Steel Combat Horseshoe",
+        "Steel Horseshoe",
+        "Weak Iron Horseshoe"
+    ];
+
+    string[] private prefixes = [
+        "S",
+        "SR",
+        "SSR"
+    ];
+
+    string[] private suffixes = [
+        "of Spirit",
+        "of Storm",
+        "of Fire",
+        "of Earth"
+    ];
+
+    uint8[] private units = [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+    ];
+
+    uint8[] private multipliers = [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        2
+    ];
+
+    uint8[] private pointSuffixes = [1, 2];
+
+    function getBreed(uint256 tokenId) public view returns (string memory) {
+        return pluck(tokenId, "BREED", breeds);
+    }
+
+    function getSkill(uint256 tokenId) public view returns (string memory) {
+        return pluck(tokenId, "SKILL", skills);
+    }
+
+    function getBarding(uint256 tokenId) public view returns (string memory) {
+        return pluck(tokenId, "BARDING", bardings);
+    }
+
+    function getStirrup(uint256 tokenId) public view returns (string memory) {
+        return pluck(tokenId, "STIRRUP", stirrups);
+    }
+
+    function getHorseShoe(uint256 tokenId) public view returns (string memory) {
+        return pluck(tokenId, "HORSESHOE", horseShoes);
+    }
+
+    function getSpeed(uint256 tokenId) public view returns (uint256) {
+        return pluckPoint(tokenId, "SPEED", units);
+    }
+
+    function getHp(uint256 tokenId) public view returns (uint256) {
+        return pluckPoint(tokenId, "HP", units);
+    }
+
+    function getStam(uint256 tokenId) public view returns (uint256) {
+        return pluckPoint(tokenId, "STAM", units);
+    }
+
+    function pluck(
+        uint256 tokenId,
+        string memory keyPrefix,
+        string[] memory sourceArray
+    ) internal view returns (string memory) {
+        uint256 rand = random(
+            string(abi.encodePacked(keyPrefix, toString(tokenId)))
+        );
+        string memory output = sourceArray[rand % sourceArray.length];
+
+        uint256 greatness = rand % 21;
+        if (greatness > 14) {
+            if (keccak256(abi.encodePacked(keyPrefix)) == keccak256(abi.encodePacked("SKILL"))) {
+                output = string(
+                    abi.encodePacked('"', prefixes[rand % prefixes.length], '" ', output)
+                );
+            }
+            if (keccak256(abi.encodePacked(keyPrefix)) == keccak256(abi.encodePacked("BARDING")) &&
+                keccak256(abi.encodePacked(keyPrefix)) == keccak256(abi.encodePacked("STIRRUP")) &&
+                keccak256(abi.encodePacked(keyPrefix)) == keccak256(abi.encodePacked("HORSESHOE"))
+            ) {
+                output = string(
+                    abi.encodePacked(output, " ", suffixes[rand % suffixes.length])
+                );
+            }
+        }
+        return output;
+    }
+
+    function pluckPoint(
+        uint256 tokenId,
+        string memory keyPrefix,
+        uint8[] memory sourceArray
+    ) internal view returns (uint256) {
+        uint256 rand = random(string(abi.encodePacked(keyPrefix, toString(tokenId))));
+        uint256 output = sourceArray[rand % sourceArray.length];
+        uint256 luck = rand % 21;
+        if (luck > 14) {
+            output += pointSuffixes[rand % pointSuffixes.length];
+        }
+        if (luck >= 19) {
+            if (luck == 19) {
+                output = (output * multipliers[rand % multipliers.length]) + pointSuffixes[rand % suffixes.length];
+            } else {
+                output = (output * multipliers[rand % multipliers.length]);
+            }
+        }
+        return output;
+    }
+
+    function tokenURI(uint256 tokenId) public view override returns (string memory) {
+        string[17] memory parts;
+        parts[
+            0
+        ] = '<svg xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin meet" viewBox="0 0 350 350"><style>.base { fill: white; font-family: serif; font-size: 14px; }</style><rect width="100%" height="100%" fill="black" /><text x="10" y="20" class="base">';
+
+        parts[1] = getBreed(tokenId);
+
+        parts[2] = '</text><text x="10" y="40" class="base">';
+
+        parts[3] = getSkill(tokenId);
+
+        parts[4] = '</text><text x="10" y="60" class="base">';
+
+        parts[5] = getBarding(tokenId);
+
+        parts[6] = '</text><text x="10" y="80" class="base">';
+
+        parts[7] = getStirrup(tokenId);
+
+        parts[8] = '</text><text x="10" y="100" class="base">';
+
+        parts[9] = getHorseShoe(tokenId);
+
+        parts[10] = '</text><text x="10" y="120" class="base">';
+
+        parts[11] = string(abi.encodePacked("SPEED: ", toString(getSpeed(tokenId))));
+
+        parts[12] = '</text><text x="10" y="140" class="base">';
+
+        parts[13] = string(abi.encodePacked("HP: ", toString(getHp(tokenId))));
+
+        parts[14] = '</text><text x="10" y="160" class="base">';
+
+        parts[15] = string(abi.encodePacked("STAM: ", toString(getStam(tokenId))));
+
+        parts[16] = "</text></svg>";
+
+        string memory output = string(
+            abi.encodePacked(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6], parts[7], parts[8])
+        );
+        output = string(
+            abi.encodePacked(
+                output,
+                parts[9],
+                parts[10],
+                parts[11],
+                parts[12],
+                parts[13],
+                parts[14],
+                parts[15],
+                parts[16]
+            )
+        );
+
+        string memory json = Base64.encode(
+            bytes(
+                string(
+                    abi.encodePacked(
+                        '{"name": "Horse (for Adventurers)',
+                        toString(tokenId),
+                        '", "description": "You can\'t go far without horse", "image": "data:image/svg+xml;base64,',
+                        Base64.encode(bytes(output)),
+                        '"}'
+                    )
+                )
+            )
+        );
+        output = string(abi.encodePacked("data:application/json;base64,", json));
+
+        return output;
+    }
+}
+
+/// [MIT License]
+/// @title Base64
+/// @notice Provides a function for encoding some bytes in base64
+/// @author Brecht Devos <[email protected]>
+library Base64 {
+    bytes internal constant TABLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    /// @notice Encodes some bytes to the base64 representation
+    function encode(bytes memory data) internal pure returns (string memory) {
+        uint256 len = data.length;
+        if (len == 0) return "";
+
+        // multiply by 4/3 rounded up
+        uint256 encodedLen = 4 * ((len + 2) / 3);
+
+        // Add some extra buffer at the end
+        bytes memory result = new bytes(encodedLen + 32);
+
+        bytes memory table = TABLE;
+
+        assembly {
+            let tablePtr := add(table, 1)
+            let resultPtr := add(result, 32)
+
+            for {
+                let i := 0
+            } lt(i, len) {
+
+            } {
+                i := add(i, 3)
+                let input := and(mload(add(data, i)), 0xffffff)
+
+                let out := mload(add(tablePtr, and(shr(18, input), 0x3F)))
+                out := shl(8, out)
+                out := add(out, and(mload(add(tablePtr, and(shr(12, input), 0x3F))), 0xFF))
+                out := shl(8, out)
+                out := add(out, and(mload(add(tablePtr, and(shr(6, input), 0x3F))), 0xFF))
+                out := shl(8, out)
+                out := add(out, and(mload(add(tablePtr, and(input, 0x3F))), 0xFF))
+                out := shl(224, out)
+
+                mstore(resultPtr, out)
+
+                resultPtr := add(resultPtr, 4)
+            }
+
+            switch mod(len, 3)
+            case 1 {
+                mstore(sub(resultPtr, 2), shl(240, 0x3d3d))
+            }
+            case 2 {
+                mstore(sub(resultPtr, 1), shl(248, 0x3d))
+            }
+
+            mstore(result, encodedLen)
+        }
+
+        return string(result);
+    }
+}
