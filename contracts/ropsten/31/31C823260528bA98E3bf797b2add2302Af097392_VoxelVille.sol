@@ -1,0 +1,170 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.6;
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Counters.sol";
+
+contract VoxelVille is ERC721, Ownable {
+    using Counters for Counters.Counter;
+    Counters.Counter private _tokenIds;
+
+    uint256 public constant MAX_SUPPLY = 7777;
+
+    uint256 public constant MAX_MINT_PER_TX = 5;
+
+    uint256 public constant PRICE = 0.05 ether;
+
+    string public baseURI;
+
+    uint256 public batchSize;
+
+    uint256 public batchCount;
+
+    bool public mintable = false;
+
+    bool public preSaleMintable = false;
+
+    uint256 public totalSupplyRemaining = MAX_SUPPLY;
+
+    mapping(address => bool) public allowList;
+
+    event Mintable(bool mintable);
+
+    event PreSaleMintable(bool preSaleMintable);
+
+    event BaseURI(string baseURI);
+
+    event BatchSize(uint256 batchSize);
+
+    event BatchCount(uint256 batchCount);
+
+    event AddToAllowList(address account);
+
+    event RemoveFromAllowList(address account);
+
+    constructor() ERC721("VoxelVille", "VOVI") {}
+
+    modifier isMintable() {
+        require(mintable, "Voxel Ville: NFT cannot be minted yet.");
+        _;
+    }
+
+    modifier isPreSaleMintable() {
+        require(preSaleMintable, "Voxel Ville: NFT cannot be minted yet.");
+        _;
+    }
+
+    modifier isNotExceedMaxMintPerTx(uint256 amount) {
+        require(
+            amount <= MAX_MINT_PER_TX,
+            "Voxel Ville: Mint amount exceeds max limit per tx."
+        );
+        _;
+    }
+
+    modifier isNotExceedAvailableSupply(uint256 amount) {
+        require(
+            batchCount + amount <= batchSize,
+            "Voxel Ville: There are no more remaining NFT's to mint."
+        );
+        _;
+    }
+
+    modifier isPaymentSufficient(uint256 amount) {
+        require(
+            msg.value == amount * PRICE,
+            "Voxel Ville: There was not enough/extra ETH transferred to mint an NFT."
+        );
+        _;
+    }
+
+    modifier isAllowList() {
+        require(
+            allowList[msg.sender],
+            "Voxel Ville: You're not on the list for the presale."
+        );
+        _;
+    }
+
+    function preSaleMint(uint256 amount)
+        public
+        payable
+        isPreSaleMintable
+        isAllowList
+        isNotExceedAvailableSupply(amount)
+        isPaymentSufficient(amount)
+    {
+        _tokenIds.increment();
+        uint256 id = _tokenIds.current();
+        _safeMint(msg.sender, id);
+        totalSupplyRemaining--;
+        batchCount++;
+        allowList[msg.sender] = false;
+    }
+
+    function mint(uint256 amount)
+        public
+        payable
+        isMintable
+        isNotExceedMaxMintPerTx(amount)
+        isNotExceedAvailableSupply(amount)
+        isPaymentSufficient(amount)
+    {
+        for (uint256 index = 0; index < amount; index++) {
+            _tokenIds.increment();
+            uint256 id = _tokenIds.current();
+            _safeMint(msg.sender, id);
+            totalSupplyRemaining--;
+            batchCount++;
+        }
+    }
+
+    function setBaseURI(string memory _URI) public onlyOwner {
+        baseURI = _URI;
+
+        emit BaseURI(baseURI);
+    }
+
+    function setMintable(bool _mintable) public onlyOwner {
+        mintable = _mintable;
+
+        emit Mintable(mintable);
+    }
+
+    function setPreSaleMintable(bool _preSaleMintable) public onlyOwner {
+        preSaleMintable = _preSaleMintable;
+
+        emit PreSaleMintable(preSaleMintable);
+    }
+
+    function setBatchSize(uint256 _batchSize) public onlyOwner {
+        batchSize = _batchSize;
+
+        emit BatchSize(batchSize);
+    }
+
+    function setBatchCount(uint256 _batchCount) public onlyOwner {
+        batchCount = _batchCount;
+
+        emit BatchCount(batchCount);
+    }
+
+    function _baseURI() internal view virtual override returns (string memory) {
+        return baseURI;
+    }
+
+    function withdraw() external onlyOwner {
+        payable(owner()).transfer(address(this).balance);
+    }
+
+    function setAddressToAllowList(address _address) public onlyOwner {
+        allowList[_address] = true;
+        emit AddToAllowList(_address);
+    }
+
+    function removeAddressFromAllowList(address _address) public onlyOwner {
+        allowList[_address] = false;
+        emit RemoveFromAllowList(_address);
+    }
+}
