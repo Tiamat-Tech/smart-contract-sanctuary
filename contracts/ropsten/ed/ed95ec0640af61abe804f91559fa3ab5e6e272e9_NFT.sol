@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.0;
+
+import '@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol';
+import '@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/utils/CountersUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/utils/StringsUpgradeable.sol';
+import './Storage.sol';
+
+contract NFT is Initializable, OwnableUpgradeable, ERC721Upgradeable, Storage {
+  using CountersUpgradeable for CountersUpgradeable.Counter;
+  using StringsUpgradeable for uint256;
+  CountersUpgradeable.Counter internal _tokenIds;
+  event Mint(uint256 indexed tokenId, address indexed minter);
+
+  struct Project_Config {
+    string collectionName;
+    string collectionSymbol;
+    string _revealHash;
+    address[] _whitelisted;
+    uint16 _mintingSupply;
+    uint16 _reservedTokenSupply;
+    uint16 _maxMintTx;
+    uint256 _price;
+  }
+
+  function initialize(Project_Config calldata projectConfig)
+    public
+    initializer
+  {
+    __ERC721_init(projectConfig.collectionName, projectConfig.collectionSymbol);
+    __Ownable_init();
+    whitelistBatch_Admin(projectConfig._whitelisted);
+    _tokenIds.increment();
+    revealHash = projectConfig._revealHash;
+    mintingSupply = projectConfig._mintingSupply;
+    reservedTokenSupply = projectConfig._reservedTokenSupply;
+    maxMintTx = projectConfig._maxMintTx;
+    price = projectConfig._price;
+    pre_saleIsActive = false; // is this a pre-release?
+    saleIsActive = false; // is the sale active?
+  }
+
+  //Get Total Supply of Tokens
+  function totalSupply() external view returns (uint256) {
+    return _tokenIds.current() - 1;
+  }
+
+  // URI:
+  function setBaseURIcid(string calldata cid) external onlyOwner {
+    baseURIcid = cid;
+  }
+
+  // Allows Tokens to be Viewed
+  function tokenURI(uint256 tokenId)
+    public
+    view
+    override
+    returns (string memory)
+  {
+    require(
+      _exists(tokenId),
+      'ERC721Metadata: URI query for nonexistent token'
+    );
+
+    return
+      bytes(baseURIcid).length > 0
+        ? string(
+          abi.encodePacked(
+            'ipfs://',
+            baseURIcid,
+            '/',
+            tokenId.toString(),
+            '.json'
+          )
+        )
+        : revealHash;
+  }
+
+  // withdraw:
+  function withdraw_Admin(address payable _address) external onlyOwner {
+    _address.transfer(address(this).balance);
+  }
+
+  // Toggle PreSale State
+  function togglePreSaleState_Admin() external onlyOwner {
+    pre_saleIsActive = !pre_saleIsActive;
+  }
+
+  // Toggle Sale State
+  function toggleSaleState_Admin() external onlyOwner {
+    saleIsActive = !saleIsActive;
+  }
+
+  // Claim Tokens
+  function claim() external {
+    uint256 tokenCount = _tokenIds.current();
+    require(whitelisted[msg.sender], 'NOT_WHITELISTED');
+    require(!blacklisted[msg.sender], 'BANNED');
+    require(saleIsActive, 'SALE_CLOSED');
+    require(!claimedToken[msg.sender], 'TOKEN_CLAIMED');
+    require(
+      tokenCount <= mintingSupply - reservedTokenSupply,
+      'EXCEEDS_SUPPLY'
+    );
+
+    internal_mint(msg.sender, 1);
+    claimedToken[msg.sender] = true;
+  }
+
+  // Mint Tokens
+  function mint(uint8 _amount) external payable {
+    uint256 tokenCount = _tokenIds.current();
+    require(!blacklisted[msg.sender], 'BANNED');
+    require(saleIsActive, 'SALE_CLOSED');
+    require(_amount > 0 && _amount <= maxMintTx, 'EXCEEDS_TRANSACTION_LIMIT');
+    require(
+      tokenCount + _amount <= mintingSupply - reservedTokenSupply,
+      'EXCEEDS_SUPPLY'
+    );
+    require(msg.value == (price) * _amount, 'NOT_ENOUGH_ETHER');
+
+    internal_mint(msg.sender, _amount);
+  }
+
+  // Mint Handler
+  function internal_mint(address _to, uint8 _amount) internal {
+    for (uint256 i = 0; i < _amount; i++) {
+      if (_tokenIds.current() <= mintingSupply) {
+        _safeMint(_to, _tokenIds.current());
+        mintedBy[_tokenIds.current()] = _to;
+        emit Mint(_tokenIds.current(), _to);
+        _tokenIds.increment();
+      }
+    }
+  }
+
+  function mintFromReserve(address _to, uint256 _amount) external onlyOwner {
+    require(_amount <= reservedTokenSupply, 'EXCEEDS_SUPPLY');
+    require(
+      _tokenIds.current() + _amount <= reservedTokenSupply,
+      'Purchase would exceed max supply of The reserve!'
+    );
+
+    for (uint256 i; i < _amount; i++) {
+      _safeMint(_to, _tokenIds.current());
+      emit Mint(_tokenIds.current(), _to);
+      _tokenIds.increment();
+    }
+  }
+
+  function whitelistBatch_Admin(address[] calldata _to) public onlyOwner {
+    for (uint256 i = 0; i < _to.length; i++) {
+      whitelisted[_to[i]] = true;
+    }
+  }
+
+  function blacklistBatch_Admin(address[] calldata _addr) external onlyOwner {
+    for (uint256 i = 0; i < _addr.length; i++) {
+      blacklisted[_addr[i]] = true;
+    }
+  }
+}
