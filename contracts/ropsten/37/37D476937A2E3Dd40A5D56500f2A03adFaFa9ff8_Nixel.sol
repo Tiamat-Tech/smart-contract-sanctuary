@@ -1,0 +1,702 @@
+// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+contract Nixel is ERC721Enumerable, Ownable {
+    using Strings for uint256;
+
+    event MintNixel(
+        address indexed sender,
+        uint256 startWith,
+        int256 location_x,
+        int256 location_y
+    );
+
+    event BlockBought(
+        uint256 tokenId,
+        address seller,
+        address buyer,
+        uint256 price,
+        int256[2] location
+    );
+
+    event BlockForSale(
+        uint256 tokenId,
+        address seller,
+        uint256 price,
+        int256[2] location
+    );
+
+    event BlockForRent(
+        uint256 tokenId,
+        address landlord,
+        uint256 price,
+        uint256 duration,
+        int256[2] location
+    );
+
+    event BlockRented(
+        uint256 tokenId,
+        address landlord,
+        address renter,
+        uint256 price,
+        uint256 timeStart,
+        uint256 timeStop,
+        int256[2] location
+    );
+
+    event BlockUpdated(
+        uint256 tokenId,
+        address updater,
+        string newURI,
+        int256[2] location
+    );
+
+    event Deposit(
+        uint256 tokenId,
+        address payable token,
+        address from,
+        uint256 amount
+    );
+
+    event Withdraw(
+        uint256 tokenId,
+        address payable token,
+        address from,
+        uint256 amount
+    );
+
+    uint256 public totalBlocks;
+    uint256 public maxBlocks = 10201;
+
+    mapping(uint256 => string) private _tokenURI;
+    mapping(int256 => mapping(int256 => uint256)) private _spawnBlockId;
+    mapping(int256 => mapping(int256 => string)) private _BlockName;
+    mapping(int256 => mapping(int256 => bool)) private _reserved;
+    mapping(int256 => mapping(int256 => uint256)) private _reservePrice;
+
+    mapping(int256 => mapping(int256 => bool)) private _forSale;
+    mapping(int256 => mapping(int256 => uint256)) private _salePrice;
+    mapping(int256 => mapping(int256 => address)) private _sellerAddress;
+
+    mapping(int256 => mapping(int256 => bool)) private _forRent;
+    mapping(int256 => mapping(int256 => uint256)) private _rentPrice;
+    mapping(int256 => mapping(int256 => address)) private _landlordAddress;
+    mapping(int256 => mapping(int256 => address)) private _renterAddress;
+    mapping(int256 => mapping(int256 => uint256)) private _rentDuration;
+    mapping(int256 => mapping(int256 => uint256)) private _rentStart;
+    mapping(int256 => mapping(int256 => uint256)) private _rentStop;
+
+    mapping(uint256 => mapping(address => mapping(address => uint256)))
+        private _depositBalance; //tokenId => tokenAddress => userAddress => Amount
+
+    uint256 public priceLuxury = 150000000000000000;
+    uint256 public pricePremium = 100000000000000000;
+    uint256 public priceEconomy = 10000000000000000;
+
+    int256 public luxuryBounds = 5;
+    int256 public premiumBounds = 21;
+    int256 public economyBounds = 50;
+
+    string public baseURI;
+    bool private mintingEnabled;
+
+    constructor() ERC721("Nixel", "NIXEL") {
+        baseURI = "https://ipfs.io/ipfs/";
+        setNearSpawnReserved(true);
+    }
+
+    function createSpawn(
+        int256 x_pos,
+        int256 y_pos
+    ) public onlyOwner {
+        _blockOwner[x_pos][y_pos] = _msgSender();
+        _blockTokenId[x_pos][y_pos] = totalBlocks + 1;
+        _blockLocation[totalBlocks + 1] = [x_pos,y_pos];
+        _BlockName[x_pos][y_pos] = "Nixel Spawn";
+        _spawnBlockId[x_pos][y_pos] = totalBlocks + 1;
+        emit MintNixel(_msgSender(), totalBlocks + 1, x_pos, y_pos);
+        _mint(_msgSender(), 1 + totalBlocks++);
+    }
+
+    function deposit(uint256 tokenId, address payable tokenContract)
+        external
+        payable
+    {
+        require(
+            _exists(tokenId),
+            "ERC721Metadata: Data query for nonexistent token"
+        );
+        require(
+            IERC20(tokenContract).transferFrom(
+                _msgSender(),
+                address(this),
+                msg.value
+            )
+        );
+        _depositBalance[tokenId][tokenContract][_msgSender()] += msg.value;
+        emit Deposit(tokenId, tokenContract, _msgSender(), msg.value);
+    }
+
+    function withdraw(
+        uint256 tokenId,
+        address payable tokenContract,
+        uint256 _amount
+    ) external payable {
+        require(
+            _exists(tokenId),
+            "ERC721Metadata: Query for nonexistent token"
+        );
+        require(ownerOf(tokenId) == _msgSender(), "Not owner of NFT");
+        require(
+            _depositBalance[tokenId][tokenContract][_msgSender()] >= _amount,
+            "Insufficient funds in contract"
+        );
+        _depositBalance[tokenId][tokenContract][_msgSender()] -= _amount;
+        require(IERC20(tokenContract).transfer(_msgSender(), _amount));
+        emit Withdraw(tokenId, tokenContract, _msgSender(), _amount);
+    }
+
+    function recoveryWithdraw(address payable tokenContract, uint256 _amount)
+        external
+        payable
+        onlyOwner
+    {
+        require(
+            IERC20(tokenContract).balanceOf(address(this)) >= _amount,
+            "Insufficient funds in contract"
+        );
+        require(IERC20(tokenContract).transfer(_msgSender(), _amount));
+        emit Withdraw(0, tokenContract, _msgSender(), _amount);
+    }
+
+    function nftBalance(
+        uint256 tokenId,
+        address tokenContract,
+        address owner
+    ) public view virtual returns (uint256) {
+        require(
+            _exists(tokenId),
+            "ERC721Metadata: Data query for nonexistent token."
+        );
+        return _depositBalance[tokenId][tokenContract][owner];
+    }
+
+    function _baseURI() internal view virtual override returns (string memory) {
+        return baseURI;
+    }
+
+    function setBaseURI(string memory _newURI) public onlyOwner {
+        baseURI = _newURI;
+    }
+
+    function setNearSpawnReserved(bool _reserveToken) public onlyOwner {
+        _reserved[0][-1] = _reserveToken;
+        _reserved[1][-1] = _reserveToken;
+        _reserved[1][0] = _reserveToken;
+        _reserved[1][1] = _reserveToken;
+        _reserved[0][1] = _reserveToken;
+        _reserved[-1][0] = _reserveToken;
+        _reserved[-1][1] = _reserveToken;
+        _reserved[-1][-1] = _reserveToken;
+    }
+
+    function setReserved(
+        int256 x_pos,
+        int256 y_pos,
+        bool _reserveToken
+    ) public onlyOwner {
+        _reserved[x_pos][y_pos] = _reserveToken;
+    }
+
+    function setReservedPrice(
+        int256 x_pos,
+        int256 y_pos,
+        uint256 price
+    ) public onlyOwner {
+        _reservePrice[x_pos][y_pos] = price;
+    }
+
+    function getReservedPrice(int256 x_pos, int256 y_pos)
+        public
+        view
+        returns (uint256)
+    {
+        return _reservePrice[x_pos][y_pos];
+    }
+
+    function checkReserved(int256 x_pos, int256 y_pos)
+        public
+        view
+        returns (bool)
+    {
+        return _reserved[x_pos][y_pos];
+    }
+
+    function buyBlock(int256 x_pos, int256 y_pos) public payable {
+        require(
+            _exists(blockTokenId(x_pos, y_pos)),
+            "ERC721Metadata: Data query for nonexistent token."
+        );
+        require(_forSale[x_pos][y_pos], "Block not for sale");
+        require(
+            msg.value == _salePrice[x_pos][y_pos],
+            "Incorrect payment amount"
+        );
+        require(
+            _sellerAddress[x_pos][y_pos] != address(0),
+            "Seller's address is invalid"
+        );
+        require(
+            ownerOf(blockTokenId(x_pos, y_pos)) == _sellerAddress[x_pos][y_pos],
+            "Seller does not own NFT"
+        );
+        payable(_sellerAddress[x_pos][y_pos]).transfer(msg.value);
+        _blockOwner[x_pos][y_pos] = _msgSender();
+        emit BlockBought(
+            blockTokenId(x_pos, y_pos),
+            _sellerAddress[x_pos][y_pos],
+            _msgSender(),
+            _salePrice[x_pos][y_pos],
+            [x_pos, y_pos]
+        );
+        _forSale[x_pos][y_pos] = false;
+        _salePrice[x_pos][y_pos] = 0;
+        _sellerAddress[x_pos][y_pos] = address(0);
+        _transfer(
+            _sellerAddress[x_pos][y_pos],
+            _msgSender(),
+            blockTokenId(x_pos, y_pos)
+        );
+    }
+
+    function setForSale(
+        int256 x_pos,
+        int256 y_pos,
+        bool _isForSale,
+        uint256 price
+    ) public {
+        require(
+            _exists(blockTokenId(x_pos, y_pos)),
+            "ERC721Metadata: Data query for nonexistent token."
+        );
+        require(
+            ownerOf(blockTokenId(x_pos, y_pos)) == _msgSender(),
+            "Not owner of NFT"
+        );
+        _forSale[x_pos][y_pos] = _isForSale;
+        _salePrice[x_pos][y_pos] = price;
+        _sellerAddress[x_pos][y_pos] = _msgSender();
+        emit BlockForSale(
+            blockTokenId(x_pos, y_pos),
+            _sellerAddress[x_pos][y_pos],
+            _salePrice[x_pos][y_pos],
+            [x_pos, y_pos]
+        );
+    }
+
+    function checkForSale(int256 x_pos, int256 y_pos)
+        public
+        view
+        returns (
+            bool,
+            uint256,
+            address
+        )
+    {
+        require(
+            _exists(blockTokenId(x_pos, y_pos)),
+            "ERC721Metadata: Data query for nonexistent token."
+        );
+        return (
+            _forSale[x_pos][y_pos],
+            _salePrice[x_pos][y_pos],
+            _sellerAddress[x_pos][y_pos]
+        );
+    }
+
+    function setForRent(
+        int256 x_pos,
+        int256 y_pos,
+        bool _isForRent,
+        uint256 duration,
+        uint256 price
+    ) public {
+        require(
+            _exists(blockTokenId(x_pos, y_pos)),
+            "ERC721Metadata: Data query for nonexistent token."
+        );
+        require(
+            ownerOf(blockTokenId(x_pos, y_pos)) == _msgSender(),
+            "Not owner of NFT"
+        );
+        _forRent[x_pos][y_pos] = _isForRent;
+        _rentDuration[x_pos][y_pos] = duration;
+        _rentPrice[x_pos][y_pos] = price;
+        emit BlockForRent(
+            blockTokenId(x_pos, y_pos),
+            _msgSender(),
+            _rentPrice[x_pos][y_pos],
+            _rentDuration[x_pos][y_pos],
+            [x_pos, y_pos]
+        );
+    }
+
+    function checkForRent(int256 x_pos, int256 y_pos)
+        public
+        view
+        returns (
+            bool,
+            uint256,
+            uint256
+        )
+    {
+        require(
+            _exists(blockTokenId(x_pos, y_pos)),
+            "ERC721Metadata: Data query for nonexistent token."
+        );
+        return (
+            _forRent[x_pos][y_pos],
+            _rentPrice[x_pos][y_pos],
+            _rentDuration[x_pos][y_pos]
+        );
+    }
+
+    function rentBlock(int256 x_pos, int256 y_pos) public payable {
+        require(
+            _exists(blockTokenId(x_pos, y_pos)),
+            "ERC721Metadata: Data query for nonexistent token."
+        );
+        require(_forRent[x_pos][y_pos], "Block not for rent");
+        require(
+            msg.value == _rentPrice[x_pos][y_pos],
+            "Incorrect payment amount"
+        );
+        require(
+            _landlordAddress[x_pos][y_pos] != address(0),
+            "Landlord's address is invalid"
+        );
+        require(
+            ownerOf(blockTokenId(x_pos, y_pos)) ==
+                _landlordAddress[x_pos][y_pos],
+            "Landlord does not own NFT"
+        );
+        payable(_landlordAddress[x_pos][y_pos]).transfer(msg.value);
+        _renterAddress[x_pos][y_pos] = _msgSender();
+        _forRent[x_pos][y_pos] = false;
+        _rentStart[x_pos][y_pos] = block.timestamp;
+        _rentStop[x_pos][y_pos] = block.timestamp + _rentDuration[x_pos][y_pos];
+        emit BlockRented(
+            blockTokenId(x_pos, y_pos),
+            _landlordAddress[x_pos][y_pos],
+            _msgSender(),
+            _rentPrice[x_pos][y_pos],
+            _rentStart[x_pos][y_pos],
+            _rentStop[x_pos][y_pos],
+            [x_pos, y_pos]
+        );
+    }
+
+    function getRenter(int256 x_pos, int256 y_pos)
+        public
+        view
+        returns (address)
+    {
+        return _renterAddress[x_pos][y_pos];
+    }
+
+    function setTokenURI(
+        uint256 tokenId,
+        string memory _newURI,
+        string memory _name
+    ) public {
+        require(
+            _exists(tokenId),
+            "ERC721Metadata: URI query for nonexistent token."
+        );
+        if (
+            getRenter(blockLocation(tokenId)[0], blockLocation(tokenId)[1]) !=
+            address(0)
+        ) {
+            require(
+                getRenter(
+                    blockLocation(tokenId)[0],
+                    blockLocation(tokenId)[1]
+                ) == _msgSender(),
+                "Not owner or renter of NFT"
+            );
+        } else {
+            require(ownerOf(tokenId) == _msgSender(), "Not owner of NFT");
+        }
+        _tokenURI[tokenId] = _newURI;
+        _BlockName[blockLocation(tokenId)[0]][
+            blockLocation(tokenId)[1]
+        ] = _name;
+        emit BlockUpdated(
+            tokenId,
+            _msgSender(),
+            _newURI,
+            [blockLocation(tokenId)[0], blockLocation(tokenId)[1]]
+        );
+    }
+
+    function nameFromID(uint256 tokenId) public view returns (string memory) {
+        require(
+            _exists(tokenId),
+            "ERC721Metadata: URI query for nonexistent token."
+        );
+        return _BlockName[blockLocation(tokenId)[0]][blockLocation(tokenId)[1]];
+    }
+
+    function nameFromLocation(int256 x_pos, int256 y_pos)
+        public
+        view
+        returns (string memory)
+    {
+        require(blockOwner(x_pos, y_pos) != address(0), "NFT does not exist");
+        return _BlockName[x_pos][y_pos];
+    }
+
+    function setNFTName(
+        int256 x_pos,
+        int256 y_pos,
+        string memory name
+    ) public {
+        if (getRenter(x_pos, y_pos) != address(0)) {
+            require(
+                getRenter(x_pos, y_pos) == _msgSender(),
+                "Not owner or renter of NFT"
+            );
+        } else {
+            require(
+                blockOwner(x_pos, y_pos) == _msgSender(),
+                "Not owner of NFT"
+            );
+        }
+        _BlockName[x_pos][y_pos] = name;
+    }
+
+    function getBlockMintPrice(int256 x_pos, int256 y_pos)
+        public
+        view
+        virtual
+        returns (uint256)
+    {
+        if (
+            y_pos >= (luxuryBounds * -1) &&
+            x_pos >= (luxuryBounds * -1) &&
+            y_pos <= luxuryBounds &&
+            x_pos <= luxuryBounds
+        ) {
+            return priceLuxury;
+        } else {
+            if (
+                y_pos >= (premiumBounds * -1) &&
+                x_pos >= (premiumBounds * -1) &&
+                y_pos <= premiumBounds &&
+                x_pos <= premiumBounds
+            ) {
+                return pricePremium;
+            } else {
+                if (
+                    y_pos >= (economyBounds * -1) &&
+                    x_pos >= (economyBounds * -1) &&
+                    y_pos <= economyBounds &&
+                    x_pos <= economyBounds
+                ) {
+                    return priceEconomy;
+                } else {
+                    return 0;
+                }
+            }
+        }
+    }
+
+    function setPriceLuxury(uint256 price) public onlyOwner {
+        require(
+            totalBlocks == maxBlocks,
+            "Cannot change prices until all current blocks have been bought"
+        );
+        priceLuxury = price;
+    }
+
+    function setPricePremium(uint256 price) public onlyOwner {
+        require(
+            totalBlocks == maxBlocks,
+            "Cannot change prices until all current blocks have been bought"
+        );
+        pricePremium = price;
+    }
+
+    function setPriceEconomy(uint256 price) public onlyOwner {
+        require(
+            totalBlocks == maxBlocks,
+            "Cannot change prices until all current blocks have been bought"
+        );
+        priceEconomy = price;
+    }
+
+    function setLuxuryBounds(int256 bounds) public onlyOwner {
+        require(
+            totalBlocks == maxBlocks,
+            "Cannot increase blocks until all current blocks have been bought"
+        );
+        luxuryBounds = bounds;
+    }
+
+    function setPremiumBounds(int256 bounds) public onlyOwner {
+        require(
+            totalBlocks == maxBlocks,
+            "Cannot increase blocks until all current blocks have been bought"
+        );
+        premiumBounds = bounds;
+    }
+
+    function setEconomyBounds(int256 bounds) public onlyOwner {
+        require(
+            totalBlocks == maxBlocks,
+            "Cannot increase blocks until all current blocks have been bought"
+        );
+        economyBounds = bounds;
+    }
+
+    function setMaxBlocks(uint256 _maxBlocks) public onlyOwner {
+        require(
+            totalBlocks == maxBlocks,
+            "Cannot increase blocks until all current blocks have been bought"
+        );
+        maxBlocks = _maxBlocks;
+    }
+
+    function tokenURI(uint256 tokenId)
+        public
+        view
+        virtual
+        override
+        returns (string memory)
+    {
+        require(
+            _exists(tokenId),
+            "ERC721Metadata: URI query for nonexistent token."
+        );
+        return string(abi.encodePacked(baseURI, _tokenURI[tokenId]));
+    }
+
+    function blockURI(int256 x_pos, int256 y_pos)
+        public
+        view
+        virtual
+        returns (string memory)
+    {
+        require(
+            _exists(blockTokenId(x_pos, y_pos)),
+            "ERC721Metadata: URI query for nonexistent token."
+        );
+        return
+            string(
+                abi.encodePacked(baseURI, _tokenURI[blockTokenId(x_pos, y_pos)])
+            );
+    }
+
+    function setEnableMint(bool _enable) public onlyOwner {
+        mintingEnabled = _enable;
+    }
+
+    function tokensOfOwner(address owner)
+        public
+        view
+        returns (uint256[] memory)
+    {
+        uint256 count = balanceOf(owner);
+        uint256[] memory ids = new uint256[](count);
+        for (uint256 i = 0; i < count; i++) {
+            ids[i] = tokenOfOwnerByIndex(owner, i);
+        }
+        return ids;
+    }
+    
+    function nftsMinted()
+        public
+        view
+        returns (int256[][] memory)
+    {
+        uint256 count = totalBlocks;
+        int256[][] memory nfts = new int256[][](count);
+        for (uint256 i = 1; i <= count; i++) {
+            nfts[i] = blockLocation(i);
+        }
+        return nfts;
+    }
+
+    function mint(int256 x_pos, int256 y_pos) public payable {
+        require(mintingEnabled, "minting not enabled");
+        require(blockOwner(x_pos, y_pos) == address(0), "block already minted");
+        require(totalBlocks + 1 <= maxBlocks, "max supply reached!");
+        require(
+            (y_pos >= (economyBounds * -1) &&
+                y_pos <= (economyBounds) &&
+                x_pos >= (economyBounds * -1) &&
+                x_pos <= (economyBounds)) == true,
+            "out of bounds"
+        );
+        require(_spawnBlockId[x_pos][y_pos] == 0, "cannot mint a spawn block");
+        require(
+            (_reserved[x_pos][y_pos]) == false,
+            "this nft is currently reserved"
+        );
+        if (_reservePrice[x_pos][y_pos] == 0) {
+            if (
+                y_pos >= (luxuryBounds * -1) &&
+                x_pos >= (luxuryBounds * -1) &&
+                y_pos <= luxuryBounds &&
+                x_pos <= luxuryBounds
+            ) {
+                require(
+                    msg.value == priceLuxury,
+                    "value error, please check price."
+                );
+            } else {
+                if (
+                    y_pos >= (premiumBounds * -1) &&
+                    x_pos >= (premiumBounds * -1) &&
+                    y_pos <= premiumBounds &&
+                    x_pos <= premiumBounds
+                ) {
+                    require(
+                        msg.value == pricePremium,
+                        "value error, please check price."
+                    );
+                } else {
+                    if (
+                        y_pos >= (economyBounds * -1) &&
+                        x_pos >= (economyBounds * -1) &&
+                        y_pos <= economyBounds &&
+                        x_pos <= economyBounds
+                    ) {
+                        require(
+                            msg.value == priceEconomy,
+                            "value error, please check price."
+                        );
+                    }
+                }
+            }
+        } else {
+            require(
+                msg.value == _reservePrice[x_pos][y_pos],
+                "value error, please check price."
+            );
+        }
+        payable(owner()).transfer(msg.value);
+        _blockOwner[x_pos][y_pos] = _msgSender();
+        _blockTokenId[x_pos][y_pos] = totalBlocks + 1;
+        _blockLocation[totalBlocks + 1] = [x_pos,y_pos];
+        _BlockName[x_pos][y_pos] = "";
+        emit MintNixel(_msgSender(), totalBlocks + 1, x_pos, y_pos);
+        _mint(_msgSender(), 1 + totalBlocks++);
+    }
+}
