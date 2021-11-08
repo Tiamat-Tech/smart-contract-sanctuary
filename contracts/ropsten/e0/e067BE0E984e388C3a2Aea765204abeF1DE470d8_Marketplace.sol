@@ -1,0 +1,240 @@
+//// SPDX-License-Identifier: GPL-3.0
+pragma solidity >= 0.7.0 < 0.9.0;
+
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "hardhat/console.sol";
+
+contract Marketplace {
+    
+    struct Trade {
+        address poster;
+        uint256 tokenId;
+        IERC721 tokenContract;
+        uint256 price;
+        bytes32 status; // Open, Executed, Cancelled
+    }
+
+     struct Loyalty {
+        address poster;
+        uint256 amount;
+    }
+    struct Auction {
+        address poster;
+        uint256 tokenId;
+        IERC721 tokenContract;
+        uint256 price;
+        bytes32 status;
+        uint256 offerCount;
+        uint256  endtime;
+
+    }
+    struct Offer {
+        address poster;
+        uint256 price;
+        bytes32 status;
+    }
+
+      struct Bid {
+        address poster;
+        uint256 price;
+    }
+
+    uint public tradeCounter;
+    uint public auctionCounter;
+
+    mapping(uint256 => Trade) public trades;
+    mapping(uint256 => Auction) public auctions;
+    mapping(uint256 => Bid[]) public auctionsBids;
+    mapping(uint256 => Offer[]) public offers;
+    mapping(uint256 => uint256) public offerCount;
+    mapping(uint256 => Loyalty) public NFTLoyalty;
+    
+    constructor () {
+        tradeCounter = 0;
+    }
+
+
+    function setLoyalty(uint256 _tokenId,uint256 loyalty) public{
+
+        require((loyalty / 10000 ) * 10000 == loyalty, "loyalty is small" );
+
+        NFTLoyalty[_tokenId] = Loyalty({
+            poster: msg.sender,
+            amount: loyalty
+        });
+
+    }
+    function openTrade(address _tokenAddress, uint256 _tokenId, uint256 _price) public {
+
+        IERC721(_tokenAddress).transferFrom(msg.sender, address(this), _tokenId);
+        trades[tradeCounter] = Trade({
+            poster: msg.sender,
+            tokenId: _tokenId,
+            tokenContract: IERC721(_tokenAddress),
+            price: _price,
+            status: "Open"
+        });
+
+
+       
+    }
+    
+    function openAuction(address _tokenAddress, uint256 _tokenId, uint256 _price,uint256 _endtime) public {
+
+        IERC721(_tokenAddress).transferFrom(msg.sender, address(this), _tokenId);
+        auctions[auctionCounter] = Auction({
+            poster: msg.sender,
+            tokenId: _tokenId,
+            tokenContract: IERC721(_tokenAddress),
+            price: _price,
+            status: "Open",
+            offerCount: 0,
+            endtime:_endtime
+        });
+
+        auctionCounter++;
+    }
+
+    function executeTrade(uint256 _trade) public payable tradeExists(_trade) {
+
+
+        
+        Trade memory trade = trades[_trade];
+        Loyalty memory loyalty = NFTLoyalty[trade.tokenId];
+        require(trade.status == "Open", "Trade is not Open.");
+        require(msg.value >= trade.price, "Did not pay enough.");
+
+        if(loyalty.amount>10000){
+            payable(loyalty.poster).call{value: trade.price * loyalty.amount / 10000 }("");
+            payable(trade.poster).call{value: trade.price * (10000-loyalty.amount)  / 10000 }("");
+
+        }else{
+            payable(trade.poster).call{value: trade.price}("");
+
+        }
+        
+        trade.tokenContract.transferFrom(address(this), msg.sender, trade.tokenId);
+        trades[_trade].status = "Executed";
+        
+        //emit TradeStatusChange(_trade, "Executed");
+    }
+    function makeOffer(uint256 _price,uint256 _tokenId) public payable{
+        Offer memory _offer = Offer({
+            poster: msg.sender,
+            price: _price,
+            status: "Open"
+        });
+        require(msg.value>=_offer.price, "not enough Ether");
+        payable(address(this)).call{value: _offer.price}("");
+        offers[_tokenId][offerCount[_tokenId]]=_offer;
+        offerCount[_tokenId]++;
+    }
+
+    function cancelOffer(uint256 _tokenId, uint256 _offer) public payable{
+        Offer memory offer = offers[_tokenId][_offer];
+        require(msg.sender==offer.poster," Offer can only be cancelled by poster");
+        require(offer.status == "Open", "Offer is not Open");
+        payable(offer.poster).call{value: offer.price}("");
+        offers[_tokenId][_offer].status="Cancelled";
+    }
+
+    function makeAuctionBid(uint256 _auction, uint256 _price) public payable auctionExists(_auction){
+        Bid memory _bid = Bid({
+            poster: msg.sender,
+            price: _price
+        });
+        Auction memory auction = auctions[_auction];
+
+        require( block.timestamp < auctions[_auction].endtime,"auction is finish" );
+        require(auction.status == "Open", "Auction is not Open.");
+        require(msg.value>=_bid.price, "not enough Ether");
+        require(msg.value > auctions[_auction].price, " new bid should be more");
+
+        if(auction.offerCount>=1){
+              payable(  auctionsBids[_auction][auction.offerCount-1].poster).call{value: auctionsBids[_auction][auction.offerCount-1].price}("");
+        }
+       
+        payable(address(this)).call{value: _bid.price}("");
+        auctionsBids[_auction].push(_bid); 
+        auctions[_auction].price = _price;
+        auctions[_auction].offerCount++;
+    
+      
+    }
+    
+    function acceptOffer(address _tokenAddress, uint256 _tokenId, uint256 _offer) public payable{
+        Offer memory offer = offers[_tokenId][_offer];
+        require(msg.sender == IERC721(_tokenAddress).ownerOf(_tokenId), "You cant accept an offer, for an auction you dont host");
+        require(offer.status =="Open", "Offer must be open");
+        payable(msg.sender).call{value: offer.price}("");
+        IERC721(_tokenAddress).transferFrom(address(this), offer.poster, _tokenId);
+        offers[_tokenId][_offer].status="Executed";
+    }
+
+    /// Should  maybe delete
+
+    function acceptAuctionOffer(uint256 _auction, uint256 _bid) public payable auctionExists(_auction){
+        Auction memory auction = auctions[_auction];
+        Bid memory bid = auctionsBids[_auction][_bid];
+        require(msg.sender == auctions[_auction].poster, "You cant accept an offer, for an auction you dont host");
+       // require(bid.status =="Open", "Offer must be open");
+        payable(auction.poster).call{value: bid.price}("");
+        auction.tokenContract.transferFrom(address(this), bid.poster, auction.tokenId);
+       // auctionsBids[_auction][_bid].status="Executed";
+       // for(uint i = 0; i<auction.offerCount;i++){
+           // if(auctionsBids[_auction][i].status=="Open"){
+         //       cancelAuctionOffer(_auction,i);
+           // }
+       // }
+       // auctions[_auction].status = "Executed";
+    }
+    
+    /// Should delete maybe
+    
+    function cancelAuction(uint256 _auction) public payable auctionExists(_auction){
+        Auction memory auction = auctions[_auction];
+        require(msg.sender == auction.poster, "Auction can be cancelled only by poster.");
+        require(auction.status == "Open", "Auction is not Open.");
+        auction.tokenContract.transferFrom(address(this), auction.poster,auction.tokenId);
+        auctions[_auction].status="Cancelled";
+        for(uint i = 0; i<auction.offerCount;i++){
+            //TODO return the money back to hightst bid 
+        
+               
+            
+        }
+    }
+    
+    function cancelTrade(uint256 _trade) public  tradeExists(_trade) {
+
+        Trade memory trade = trades[_trade];
+        require(msg.sender == trade.poster, "Trade can be cancelled only by poster.");
+        require(trade.status == "Open", "Trade is not Open.");
+        trade.tokenContract.transferFrom(address(this), trade.poster, trade.tokenId);
+        trades[_trade].status = "Cancelled";
+        //emit TradeStatusChange(_trade, "Cancelled");
+
+    }
+    
+    //----------------------------------------------------------------------------------
+    // modifiers
+    
+    modifier tradeExists(uint256 _trade) {
+        require(_trade < tradeCounter, "trade does not exist");
+        _;
+    }
+    modifier auctionExists(uint256 _auction) {
+        require(_auction < auctionCounter, "auction does not exist");
+        _;
+    }
+
+    //----------------------------------------------------------------------------------
+    // get Methods
+
+    /*
+    function getTrade(uint256 _trade) external view tradeExists(_trade) returns(Trade memory) {
+        string[] memory trade;
+        trade.push(trades)
+    }
+    */
+}
