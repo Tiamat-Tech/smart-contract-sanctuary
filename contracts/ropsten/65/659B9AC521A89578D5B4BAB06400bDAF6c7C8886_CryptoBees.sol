@@ -1,0 +1,123 @@
+//Contract based on https://docs.openzeppelin.com/contracts/3.x/erc721
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.7.3;
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721Enumerable.sol";
+import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+// import "./WOOL.sol";
+
+contract CryptoBees is ERC721, Ownable, Pausable  {
+
+  // mint price
+  uint256 public constant MINT_PRICE = .06 ether;
+  // max number of tokens that can be minted - 40000 in production
+  uint256 public constant MAX_TOKENS = 40000;
+  // number of tokens that can be claimed for free - 25% of MAX_TOKENS
+  uint256 public constant PAID_TOKENS = 10000;
+  // number of tokens have been minted so far
+  uint16 public minted;
+
+  // mapping from tokenId to a struct containing the token's traits
+  // mapping(uint256 => SheepWolf) public tokenTraits;
+  // mapping from hashed(tokenTrait) to the tokenId it's associated with
+  // used to ensure there are no duplicates
+  // mapping(uint256 => uint256) public existingCombinations;
+  // list of probabilities for each trait type
+  // 0 - 9 are associated with Sheep, 10 - 18 are associated with Wolves
+  // uint8[][18] public rarities;
+  // list of aliases for Walker's Alias algorithm
+  // 0 - 9 are associated with Sheep, 10 - 18 are associated with Wolves
+  // uint8[][18] public aliases;
+
+  // reference to the Barn for choosing random Wolf thieves
+  // IBarn public barn;
+  // reference to $WOOL for burning on mint
+  // WOOL public wool;
+  // reference to Traits
+  // ITraits public traits;
+
+    // function mintNFT(address recipient, string memory tokenURI)
+    //     public onlyOwner
+    //     returns (uint256)
+    // {
+    //     _tokenIds.increment();
+
+    //     uint256 newItemId = _tokenIds.current();
+    //     _mint(recipient, newItemId);
+    //     _setTokenURI(newItemId, tokenURI);
+
+    //     return newItemId;
+    // }
+
+  /** 
+   * instantiates contract and rarity tables
+   */
+  constructor() ERC721("CryptoBees Game", 'CRYPTOBEES') { 
+  }
+
+  /** 
+   * mint a token - 90% Sheep, 10% Wolves
+   * The first 20% are free to claim, the remaining cost $WOOL
+   */
+  function mint(uint256 amount, bool stake) external payable whenNotPaused {
+    require(tx.origin == _msgSender(), "Only EOA");
+    require(minted + amount <= MAX_TOKENS, "All tokens minted");
+    require(amount > 0 && amount <= 10, "Invalid mint amount");
+    if (minted < PAID_TOKENS) {
+      require(minted + amount <= PAID_TOKENS, "All tokens on-sale already sold");
+      require(amount * MINT_PRICE == msg.value, "Invalid payment amount");
+    } else {
+      require(msg.value == 0);
+    }
+
+    for (uint i = 0; i < amount; i++) {
+      minted++;
+      _safeMint(_msgSender(), minted);
+    }
+    
+  }
+
+  function transferFrom(
+    address from,
+    address to,
+    uint256 tokenId
+  ) public virtual override {
+    _transfer(from, to, tokenId);
+  }
+  
+  // function getPaidTokens() external view override returns (uint256) {
+  //   return PAID_TOKENS;
+  // }
+
+  /**
+   * allows owner to withdraw funds from minting
+   */
+  function withdraw() external onlyOwner {
+    payable(owner()).transfer(address(this).balance);
+  }
+
+  /**
+   * updates the number of tokens for sale
+   */
+  // function setPaidTokens(uint256 _paidTokens) external onlyOwner {
+  //   PAID_TOKENS = _paidTokens;
+  // }
+
+  /**
+   * enables owner to pause / unpause minting
+   */
+  function setPaused(bool _paused) external onlyOwner {
+    if (_paused) _pause();
+    else _unpause();
+  }
+
+  /** RENDER */
+
+  function tokenURI(uint256 tokenId) public view override returns (string memory) {
+    require(_exists(tokenId), "ERC721Metadata: URI query for nonexistent token");
+    return tokenURI(tokenId);
+  }
+}
