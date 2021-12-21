@@ -1,0 +1,469 @@
+// SPDX-License-Identifier: ISC
+pragma solidity >=0.8.0 <0.9.0;
+
+// import "hardhat/console.sol";
+
+import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "./utils/NFT.sol";
+import "./utils/Taxes.sol";
+import "./Splits.sol";
+
+/// @title MonumentArtifacts Contract
+/// @author [email protected]
+/// @notice This contract shall be the prime Monument NFT contract consisting of all the Artifacts in the Metaverse.
+contract MonumentArtifacts is NFT, Taxes, ReentrancyGuard {
+  // PermissionManagement internal permissionManagement; <- No need for this as `permissionManagement` is already accessible from the `NFT`.
+
+
+
+
+  /// @notice Constructor function for the MonumentArtifacts Contract
+  /// @dev Constructor function for the MonumentArtifacts ERC721 Contract
+  /// @param name_ Name of the Monument Artefact Collection
+  /// @param symbol_ Symbol for the Monument
+  /// @param _permissionManagementContractAddress Address of the PermissionManagement Contract that manages Permissions.
+  constructor(
+    string memory name_, 
+    string memory symbol_,
+    address _permissionManagementContractAddress
+  )
+  NFT(name_, symbol_, _permissionManagementContractAddress)
+  Taxes(_permissionManagementContractAddress)
+  payable
+  {
+    // Build Genesis Monument
+    _buildMonument("https://monument.app/monuments/0");
+
+    // Build Genesis Artifact and Zero Token
+    _mintArtifact(0, "https://monument.app/artifacts/0", 1);
+  }
+
+
+
+
+  // token IDs counter
+  using Counters for Counters.Counter;
+  Counters.Counter public _monumentIDs;
+  Counters.Counter public _artifactIDs;
+  Counters.Counter public _tokenIDs;
+
+
+
+
+  // Monument
+  struct Monument {
+    uint256 id;
+    string metadata;
+    uint256 timestamp;
+    address founder;
+  }
+  Monument[] public monuments;
+  mapping(uint256 => uint256[]) public getArtifactIDsByMonumentID;
+  mapping(uint256 => uint256[]) public getTokenIDsByMonumentID;
+
+  // Monument Metadata Mapping
+  mapping(string => bool) public monumentMetadataExists;
+  mapping(string => uint256) public getMonumentIDByMetadata;
+
+  // Monument Fork Data
+  mapping(uint256 => uint256[]) public getForksOfMonument;
+  mapping(uint256 => uint256) public getMonumentForkedFrom;
+
+  // Monument Rules:
+  // 1. An address can be a Founder of only One Monument.
+  // 2. An address can be a Moderator of Multiple Monuments.
+  mapping(address => uint256) public getMonumentIDByFounder;
+  mapping(address => uint256[]) public getMonumentIDsByModerator; // `getMonumentIDsByModerator` ↓
+  mapping(uint256 => address[]) public getModeratorsByMonumentID; // & `getModeratorsByMonumentID` logs the moderators added, but when mods are removed, the arrays still have them stored in the list. Therefore, when verifying if someone is truly a mod, use `isModeratorOfMonumentID`.
+  mapping(address => mapping(uint256 => bool)) public isModeratorOfMonumentID; // to truly verify if an address is a moderator of a monument, `isModeratorOfMonumentID` is the only true source.
+
+
+
+  // Artifacts
+  struct Artifact {
+    uint256 id;
+    uint256 monumentId;
+    string metadata;
+    uint256 supply; // editions
+    uint256 timestamp;
+    address author;
+  }
+  Artifact[] public artifacts;
+  mapping(uint256 => uint256[]) public getTokenIDsByArtifactID;
+  mapping(uint256 => uint256) public getArtifactIDByTokenID;
+
+  // Artifact Metadata Mapping
+  mapping(string => bool) public artifactMetadataExists;
+  mapping(string => uint256) public getArtifactIDByMetadata;
+
+  // Store Royalty Percentage for Artifacts
+  mapping(uint256 => uint256) public getRoyaltyPercentageByArtifactID;
+
+  // Artifact Fork Data
+  mapping(uint256 => uint256[]) public getForksOfArtifact;
+  mapping(uint256 => uint256) public getArtifactForkedFrom;
+
+  // Mentions (for on-chain tagging)
+  mapping(uint256 => address[]) public getMentionsByArtifactID;
+  mapping(address => uint256[]) public getArtifactsMentionedInByAddress;
+
+  // Used to Split Royalty
+  // See EIP-2981 for more information: https://eips.ethereum.org/EIPS/eip-2981
+  struct RoyaltyInfo {
+    address reciever;
+    uint256 percent;
+  }
+  mapping(uint256 => RoyaltyInfo) getRoyaltyInfoByTokenId;
+  mapping(uint256 => RoyaltyInfo) getRoyaltyInfoByArtifactId;
+
+  /// @notice returns royalties info for the given Artifact ID
+  /// @dev can be used by other contracts to get royaltyInfo
+  /// @param _tokenID Artifact ID of which royaltyInfo is to be fetched
+  /// @param _salePrice Desired Sale Price of the token to run calculations on
+  function royaltyInfo(uint256 _tokenID, uint256 _salePrice)
+  	external
+  	view
+  	returns (address receiver, uint256 royaltyAmount)
+  {
+    RoyaltyInfo memory rInfo = getRoyaltyInfoByArtifactId[_tokenID];
+	if (rInfo.reciever == address(0)) return (address(0), 0);
+	uint256 amount = (_salePrice * rInfo.percent) / 100;
+	return (payable(rInfo.reciever), amount);
+  }
+
+
+
+
+  // Monument Permission Management
+
+  /// @notice Adds Moderator to the Monument
+  /// @dev Sets `isModeratorOfMonumentID` to true.
+  /// @param _moderator Address that the Founder wishes to make the Moderator.
+  /// @param _monumentID Monument ID of the Monument to add the Moderator to.
+  function addModeratorToMonument(address _moderator, uint256 _monumentID) 
+    external
+    returns(address) 
+  {
+    permissionManagement.adhereToBanMethod(msg.sender);
+    require(
+      monuments[_monumentID].founder == msg.sender || 
+      permissionManagement.moderators(msg.sender) == true, 
+      "Unauthorized call to Add Moderator"
+    );
+    
+    getMonumentIDsByModerator[_moderator].push(_monumentID);
+    getModeratorsByMonumentID[_monumentID].push(_moderator);
+    isModeratorOfMonumentID[msg.sender][_monumentID] = true;
+
+    emit MonumentPermissionsModified (
+      msg.sender, 
+      _moderator, 
+      MonumentPermissionChange.PROMOTED_TO_MODERATOR
+    );
+    
+    return _moderator;
+  }
+
+  /// @notice Removes Moderator from the Monument
+  /// @dev Sets `isModeratorOfMonumentID` to false.
+  /// @param _moderator Address that the Founder wishes to not make the Moderator.
+  /// @param _monumentID Monument ID of the Monument to remove the Moderator from.
+  function removeModeratorFromMonument(address _moderator, uint256 _monumentID) 
+    external
+    returns(address) 
+  {
+    permissionManagement.adhereToBanMethod(msg.sender);
+    require(
+      monuments[_monumentID].founder == msg.sender || 
+      permissionManagement.moderators(msg.sender) == true, 
+      "Unauthorized call to Remove Moderator"
+    );
+    isModeratorOfMonumentID[msg.sender][_monumentID] = false;
+    emit MonumentPermissionsModified (
+      msg.sender, 
+      _moderator, 
+      MonumentPermissionChange.KICKED_FROM_TEAM
+    );
+    return _moderator;
+  }
+
+  /// @notice To change the Founder of a Monument
+  /// @dev Does "monuments[_monumentID].founder = _newFounder;"
+  /// @param _monumentID Monument ID of the Monument to change the Founder of.
+  /// @param _newFounder Address that the current Founder wishes to make the new Founder.
+  function transferFoundership(uint256 _monumentID, address _newFounder) 
+    external
+    returns(address)
+  {
+    permissionManagement.adhereToBanMethod(msg.sender);
+    require(
+      monuments[_monumentID].founder == msg.sender || 
+      permissionManagement.moderators(msg.sender) == true, 
+      "Unauthorized call to Change Founder"
+    );
+    monuments[_monumentID].founder = _newFounder;
+    emit MonumentPermissionsModified (
+      msg.sender, 
+      _newFounder, 
+      MonumentPermissionChange.MADE_FOUNDER
+    );
+    return _newFounder;
+  }
+
+
+
+
+
+  // Events
+  event BuildMonument (
+    uint256 indexed id,
+    string indexed metadata,
+    address indexed founder,
+    uint256 paidAmount
+  );
+  event MintArtifact (
+    uint256 indexed id,
+    uint256 indexed monumentId,
+    string metadata,
+    uint256 supply,
+    address indexed author,
+    uint256 paidAmount
+  );
+  event MonumentPermissionsModified (
+    address actionedBy, 
+    address _address, 
+    MonumentPermissionChange _roleChange
+  );
+
+
+
+
+
+  // Enums
+  enum MonumentPermissionChange { 
+    MADE_FOUNDER,
+    PROMOTED_TO_MODERATOR,
+    KICKED_FROM_TEAM
+  }
+
+
+
+  // Public Functions
+
+  /// @notice Creates a Monument
+  /// @param metadata IPFS / Arweave / Custom URL
+  /// @param forkOf Monument ID of the Monument you want to create a Fork of. 0 for nothing.
+  function buildMonument(
+      string memory metadata,
+      string memory artifactMetadata,
+      uint256 forkOf
+    )
+    external
+    payable
+    nonReentrant
+    returns(uint256)
+  {
+    permissionManagement.adhereToBanMethod(msg.sender);
+
+    // metadata must not be empty
+    require(bytes(metadata).length > 0 || bytes(artifactMetadata).length > 0, "Empty Metadata");
+
+    // a founder cant build again
+    require(getMonumentIDByFounder[msg.sender] == 0, "You already own a Monument");
+
+    // make sure another monument with the same metadata does not exist
+    require(monumentMetadataExists[metadata] != true, "Monument already minted");
+
+    // forkOf must be a valid Monument ID
+    require(monuments[forkOf].timestamp > 0, "Invalid forkOf Monument");
+
+    // charge taxes (if any)
+    _chargeMonumentTax();
+
+    uint256 monumentID = _buildMonument(metadata);
+
+    // Attach Forks
+    getForksOfMonument[forkOf].push(monumentID);
+    getMonumentForkedFrom[monumentID] = forkOf;
+
+    // Make a Genesis Artifact just for the Monument
+    _mintArtifact(0, artifactMetadata, 1);
+
+    return monumentID;
+  }
+
+  /// @notice Creates an Artifact on a Monument
+  /// @param monumentId Monument ID of the Monument to mint this Artifact on.
+  /// @param metadata IPFS / Arweave / Custom URL
+  /// @param supply A non-zero value of NFTs to mint for this Artifact
+  /// @param royaltyPercentage Percentage of Royalty tagged people wish to collectively collect on NFT sale in the market
+  /// @param forkOf Artifact ID of the Artifact you want to create a Fork of. 0 for nothing.
+  function mintArtifact(
+      uint256 monumentId,
+      string memory metadata,
+      uint256 supply,
+      address[] memory mentions,
+      uint256 forkOf,
+      uint256 royaltyPercentage,
+      address[] memory splitBeneficiaries,
+      uint256[] memory percentagesCorrespondingToSplitBeneficiaries
+    )
+    external
+    payable
+    nonReentrant
+    returns(uint256)
+  {
+    permissionManagement.adhereToBanMethod(msg.sender);
+    
+    // royaltyPercentage should be 0-100 only
+    require(royaltyPercentage >= 0 && royaltyPercentage <= 100, "Invalid Royalty Percentage value");
+
+    // splitBeneficiaries & percentagesCorrespondingToSplitBeneficiaries Array length should be equal
+    require(splitBeneficiaries.length == percentagesCorrespondingToSplitBeneficiaries.length, "Invalid Beneficiary Data");
+
+    // sum of percentagesCorrespondingToSplitBeneficiaries must be 100
+    uint256 _totalPercentage;
+    for (uint256 i = 0; i < splitBeneficiaries.length; i++) {
+      require(splitBeneficiaries[i] != address(0));
+      require(percentagesCorrespondingToSplitBeneficiaries[i] > 0);
+      require(percentagesCorrespondingToSplitBeneficiaries[i] <= 100);
+      _totalPercentage += percentagesCorrespondingToSplitBeneficiaries[i];
+    }
+    require(_totalPercentage == 100, "Total percentage must be 100");
+
+    // metadata must not be empty
+    require(bytes(metadata).length > 0, "Empty Metadata");
+    
+    // must be a moderator of the monument to be able to mint
+    require(isModeratorOfMonumentID[msg.sender][monumentId] == true, "You cant mint on this Monument");
+
+    // make sure another artifact with the same metadata does not exist
+    require(artifactMetadataExists[metadata] != true, "Artifact already minted");
+
+    // forkOf must be a valid Artifact ID
+    require(artifacts[forkOf].timestamp > 0, "Invalid forkOf Artifact");
+
+    // supply cant be 0
+    require(supply > 0, "Supply must be non-zero");
+
+    // charge taxes (if any)
+    _chargeArtifactTax();
+
+	uint256 artifactID = _mintArtifact(monumentId, metadata, supply);
+	getRoyaltyPercentageByArtifactID[artifactID] = royaltyPercentage;
+
+    // Mint a new Splits contract
+    Splits splits = new Splits(splitBeneficiaries, percentagesCorrespondingToSplitBeneficiaries);
+
+    // Populate royalties map for new Artifact ID
+    getRoyaltyInfoByArtifactId[artifactID] = RoyaltyInfo(address(splits), royaltyPercentage);
+
+    // Mention
+    getMentionsByArtifactID[artifactID] = mentions;
+    for (uint256 i = 0; i < mentions.length; i++) {
+      getArtifactsMentionedInByAddress[mentions[i]].push(artifactID);
+    }
+
+    // Attach Forks
+    getForksOfArtifact[forkOf].push(artifactID);
+    getArtifactForkedFrom[artifactID] = forkOf;
+
+    return artifactID;
+  }
+
+
+
+
+  // Functions for Internal Use
+
+  /// @dev Builds a Monument with no checks. For internal use only.
+  function _buildMonument(
+      string memory metadata
+    )
+    internal
+    returns(uint256)
+  {
+    uint256 newId = _monumentIDs.current();
+    _monumentIDs.increment();
+
+    monuments.push(
+      Monument(
+        newId,
+        metadata,
+        block.timestamp,
+        msg.sender
+      )
+    );
+    monumentMetadataExists[metadata] = true;
+    getMonumentIDByMetadata[metadata] = newId;
+
+    // Set Permissions
+    getMonumentIDByFounder[msg.sender] = newId;
+    getMonumentIDsByModerator[msg.sender].push(newId);
+    getModeratorsByMonumentID[newId].push(msg.sender);
+    isModeratorOfMonumentID[msg.sender][newId] = true;
+
+    // Emit Event
+    emit BuildMonument (
+      newId,
+      metadata,
+      msg.sender,
+      msg.value
+    );
+
+    return newId;
+  }
+
+  /// @dev Builds an Artifact with no checks. For internal use only.
+  function _mintArtifact(
+      uint256 monumentId,
+      string memory metadata,
+      uint256 supply
+    )
+    internal
+    returns(uint256)
+  {
+    uint256 newId = _artifactIDs.current();
+    _artifactIDs.increment();
+
+    artifacts.push(
+      Artifact(
+        newId,
+        monumentId,
+        metadata,
+        supply,
+        block.timestamp,
+        msg.sender
+      )
+    );
+    artifactMetadataExists[metadata] = true;
+    getArtifactIDByMetadata[metadata] = newId;
+    getArtifactIDsByMonumentID[monumentId].push(newId);
+
+    // Mint tokens
+    for (uint256 i = 0; i < supply; i++) {
+      uint256 newTokenId = _tokenIDs.current();
+      _tokenIDs.increment();
+
+      _mint(msg.sender, newTokenId);
+      _setTokenURI(newTokenId, metadata);
+      
+      getTokenIDsByMonumentID[monumentId].push(newTokenId);
+      getTokenIDsByArtifactID[newId].push(newTokenId);
+      getArtifactIDByTokenID[newTokenId] = newId;
+    }
+
+    // Emit Event
+    emit MintArtifact (
+      newId,
+      monumentId,
+      metadata,
+      supply,
+      msg.sender,
+      msg.value
+    );
+
+    return newId;
+  }
+}
