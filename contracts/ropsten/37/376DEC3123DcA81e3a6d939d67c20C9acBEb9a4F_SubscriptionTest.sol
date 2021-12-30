@@ -1,0 +1,149 @@
+//Contract based on [https://docs.openzeppelin.com/contracts/3.x/erc721](https://docs.openzeppelin.com/contracts/3.x/erc721)
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+
+contract SubscriptionTest is Ownable {
+    using Counters for Counters.Counter;
+
+    struct Subscription {
+        uint256 price;
+        uint256 time;
+    }
+
+    struct User_Details {
+        uint256 end_of_subscription;
+    }
+
+    uint256 constant private SECONDS_IN_DAY = 86400;
+    uint private currentPrice = 10;
+    address payable public treasury;
+    uint maxNumberOfUsers = 2;
+    uint numberOfUsers;
+    
+    mapping(address => User_Details) private users;
+    mapping(address => bool) private whitelisted;
+    mapping(uint => Subscription) private subscriptionOptions;
+    address[] currentlySubscribedAddresses;
+
+    bool public paused; 
+    address public recipient; 
+
+    constructor() {
+        subscriptionOptions[0] = Subscription(10, 14 * SECONDS_IN_DAY);
+        subscriptionOptions[1] = Subscription(15, 30 * SECONDS_IN_DAY);
+        subscriptionOptions[2] = Subscription(20, 90 * SECONDS_IN_DAY);
+        subscriptionOptions[3] = Subscription(25, 365 * SECONDS_IN_DAY);
+    }
+    
+    function setTreasury(address payable _treasury) external onlyOwner {
+        treasury = _treasury;
+    }
+
+    function setBasePrice(uint256 _index, uint256 _price) external onlyOwner {
+        subscriptionOptions[_index].price = _price;
+    }
+
+    function getSubscriptionLength(uint256 _index) external view returns(uint256) {
+        return subscriptionOptions[_index].time;
+    }
+
+    function setSubscriptionLength(uint256 _index, uint256 _timeInDays) external onlyOwner {
+        subscriptionOptions[_index].time = _timeInDays * SECONDS_IN_DAY;
+    }
+
+    function subscribe(uint256 _subscriptionIndex) external payable {
+        require(treasury != address(0), "Treasury not set yet.");
+        require(subscriptionOptions[_subscriptionIndex].price == msg.value, "Incorrect Ether value.");
+        require(!paused, "Sale is not active. Check Discord or Twitter for updates.");
+        
+        if(!whitelisted[msg.sender]) {
+            require(updateAndReturnNumberOfSubscribers() < maxNumberOfUsers, "Max number of users reached.");
+        }
+
+        User_Details storage user = users[msg.sender];
+
+        if (getTimeUntilSubscriptionExpired(msg.sender) <= 0) {
+            //time left is 0 or negative (current time + subscription time)
+            user.end_of_subscription = block.timestamp + subscriptionOptions[_subscriptionIndex].time;
+            numberOfUsers++;
+            currentlySubscribedAddresses.push(msg.sender);
+        } else {
+            //time still left on the subscription
+            user.end_of_subscription += subscriptionOptions[_subscriptionIndex].time;
+        }
+
+        // Whitelist the user
+        whitelisted[msg.sender] = true;
+
+        // Never hold Ether in the contract. Directly transfer 5% to the referrer, 95% to the treasury wallet.
+        // Can change this to a function to send all at once to save gas...
+        treasury.transfer(msg.value);
+    }
+
+    function getSubscriptionPlanPrice(uint _index) external view returns(uint256) {
+        return subscriptionOptions[_index].price;
+    }
+
+    function setMaxNumberOfUsers(uint _numberOfUsers) external onlyOwner {
+        maxNumberOfUsers = _numberOfUsers;
+    }
+ 
+    function getMaxNumberOfUsers() external view returns(uint) {
+        return maxNumberOfUsers;
+    }
+
+    function getTimeUntilSubscriptionExpired(address _address) public view returns(int256) {
+        return int256(users[_address].end_of_subscription) - int256(block.timestamp);
+    }
+
+    function updateAndReturnNumberOfSubscribers() public returns(uint) {
+        uint index = 0;
+        while (index < currentlySubscribedAddresses.length) {
+            while (index < currentlySubscribedAddresses.length && getTimeUntilSubscriptionExpired(currentlySubscribedAddresses[index]) <= 0) {
+                efficientRemove(index);
+            }
+            index++;
+        }
+        return currentlySubscribedAddresses.length;
+    }
+
+    function efficientRemove(uint _index) internal {
+        require(_index < currentlySubscribedAddresses.length);
+        users[currentlySubscribedAddresses[_index]].end_of_subscription = 0;
+        whitelisted[currentlySubscribedAddresses[_index]] = false;
+        currentlySubscribedAddresses[_index] = currentlySubscribedAddresses[currentlySubscribedAddresses.length - 1];
+        currentlySubscribedAddresses.pop();
+        numberOfUsers--;
+    }
+
+    function getWhitelistedAddresses() external view returns(address[] memory) {
+        return currentlySubscribedAddresses;
+    }
+
+    function removeAddressFromWhitelist(address _address) external onlyOwner {
+        for (uint i = 0; i < currentlySubscribedAddresses.length; i++) {
+            if (currentlySubscribedAddresses[i] == _address) {
+                efficientRemove(i);
+            }
+        }
+    }
+
+    function isPaused() external view returns(bool) {
+        return paused;
+    }
+
+    function setPaused(bool _paused) external onlyOwner {
+        //require(msg.sender == owner, "You are not the owner");
+        paused = _paused;
+    }
+
+    function getNumberOfWhitelistedUsers() external view returns(uint) {
+        return numberOfUsers;
+    }
+    
+}
