@@ -1,0 +1,199 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.2;
+
+// @title:      PunkX
+// @twitter:    https://twitter.com/PunkXnft
+// @team:       https://twitter.com/Killsburydough2
+// @team:       https://twitter.com/hollywood777eth
+// @partner:    https://twitter.com/ChibiLabs
+// @url:        https://punkxnft.com/
+
+/*
+*██████╗░██╗░░░██╗███╗░░██╗██╗░░██╗██╗░░██╗
+*██╔══██╗██║░░░██║████╗░██║██║░██╔╝╚██╗██╔╝
+*██████╔╝██║░░░██║██╔██╗██║█████═╝░░╚███╔╝░
+*██╔═══╝░██║░░░██║██║╚████║██╔═██╗░░██╔██╗░
+*██║░░░░░╚██████╔╝██║░╚███║██║░╚██╗██╔╝╚██╗
+*╚═╝░░░░░░╚═════╝░╚═╝░░╚══╝╚═╝░░╚═╝╚═╝░░╚═╝
+*/
+
+import "./ERC721A.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/interfaces/IERC2981.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+
+contract PunkX is ERC721A, Ownable {
+    using Address for address;
+    using MerkleProof for bytes32[];
+
+    // variables
+    string public baseTokenURI;
+    uint256 public mintPrice = 0.25 ether;
+    uint256 public collectionSize = 8888;
+    uint256 public publicMintMaxSupply = 1000;
+    uint256 public whitelistMintMaxSupply = 6400;
+    uint256 public maxItemsPerTx = 2;
+    uint256 public maxItemsPerTxForXlist = 3;
+
+    bool public whitelistMintPaused = true;
+    bool public publicMintPaused = true;
+
+    bytes32 whitelistMerkleRoot;
+    bytes32 XlistMerkleRoot;
+
+    mapping(address => uint256) public whitelistMintedAmount;
+
+    // events
+    event Mint(address indexed owner, uint256 tokenId);
+
+    // constructor
+    constructor() ERC721A("PunkX", "PUNKX", 300) {}
+
+    // dev mint
+    function ownerMint(address to, uint256 amount) public onlyOwner {
+        require((totalSupply() + amount) <= collectionSize, "sold out");
+        _mintWithoutValidation(to, amount);
+    }
+
+    // whitelist mint 
+    function setWhitelistMintMaxSupply(uint _whitelistMintMaxSupply) public onlyOwner {
+        whitelistMintMaxSupply = _whitelistMintMaxSupply;
+    }
+
+    function setWhitelistMintPaused(bool _whitelistMintPaused)
+        public
+        onlyOwner
+    {
+        whitelistMintPaused = _whitelistMintPaused;
+    }
+
+    function setWhitelistMintInfo(bytes32 _whitelistMerkleRoot, bytes32 _XlistMerkleRoot)
+        public
+        onlyOwner
+    {
+        whitelistMerkleRoot = _whitelistMerkleRoot;
+        XlistMerkleRoot = _XlistMerkleRoot;
+    }
+
+    function isAddressWhitelisted(
+        bytes32[] memory proof,
+        address _address
+    ) public view returns (bool) {
+        return isAddressInMerkleRoot(whitelistMerkleRoot, proof, _address);
+    }
+
+    function isAddressXlisted(
+        bytes32[] memory proof,
+        address _address
+    ) public view returns (bool) {
+        return isAddressInMerkleRoot(XlistMerkleRoot, proof, _address);
+    }
+
+    function whitelistMint(bytes32[] memory proof) external payable {
+        require(!whitelistMintPaused, "whitelist mint paused");
+        require(
+            isAddressWhitelisted(proof, msg.sender) || isAddressXlisted(proof, msg.sender),
+            "not eligible"
+        );
+
+        uint256 limit = maxItemsPerTx;
+        if (isAddressXlisted(proof, msg.sender)) {
+            limit = maxItemsPerTxForXlist;
+        }
+
+        uint256 remainder = msg.value % mintPrice;
+        require(remainder == 0, "send a divisible amount of eth");
+
+        uint256 amount = msg.value / mintPrice;
+        require(amount > 0, "amount to mint is 0");
+        require(
+            whitelistMintedAmount[msg.sender] + amount <= limit,
+            "exceed allowance per wallet"
+        );
+
+        require(whitelistMintMaxSupply >= amount, "whitelist mint sold out");
+        whitelistMintMaxSupply = whitelistMintMaxSupply - amount;
+        
+        whitelistMintedAmount[msg.sender] += amount;
+
+        _mintWithoutValidation(msg.sender, amount);
+    }
+
+    // public mint
+    function setPublicMintMaxSupply(uint _publicMintMaxSupply) public onlyOwner {
+        publicMintMaxSupply = _publicMintMaxSupply;
+    }
+
+    function setPublicMintPaused(bool _publicMintPaused) public onlyOwner {
+        publicMintPaused = _publicMintPaused;
+    }
+
+    function publicMint() external payable {
+        require(!publicMintPaused, "public mint paused");
+
+        uint256 remainder = msg.value % mintPrice;
+        require(remainder == 0, "send a divisible amount of eth");
+
+        uint256 amount = msg.value / mintPrice;
+
+        require(amount > 0, "amount to mint is 0");
+        require(amount <= maxItemsPerTx, "exceed allowance per tx");
+
+        require(publicMintMaxSupply >= amount, "public mint sold out");
+        publicMintMaxSupply = publicMintMaxSupply - amount;
+
+        _mintWithoutValidation(msg.sender, amount);
+    }
+
+    // helper
+    function _mintWithoutValidation(address to, uint256 amount) internal {
+        require((totalSupply() + amount) <= collectionSize, "sold out");
+        _safeMint(to, amount);
+        emit Mint(to, amount);
+    }
+
+    function isAddressInMerkleRoot(
+        bytes32 merkleRoot,
+        bytes32[] memory proof,
+        address _address
+    ) internal pure returns (bool) {
+        return proof.verify(merkleRoot, keccak256(abi.encodePacked(_address)));
+    }
+
+    // setter
+    function setMintInfo(uint256 _mintPrice) public onlyOwner {
+        mintPrice = _mintPrice;
+    }
+
+    function setMaxItemsPerTrx(uint256 _maxItemsPerTrx) public onlyOwner {
+        maxItemsPerTx = _maxItemsPerTrx;
+    }
+
+    function setBaseTokenURI(string memory _baseTokenURI) external onlyOwner {
+        baseTokenURI = _baseTokenURI;
+    }
+
+    // withdraws
+    function withdraw(address to, uint256 amount) external onlyOwner {
+        require(amount <= address(this).balance, "Exceed balance");
+        (bool success, ) = to.call{value: amount}("");
+        require(success, "Failed to send ether");
+    }
+
+    function withdrawAll(address to) external onlyOwner {
+        uint256 amount = address(this).balance;
+        (bool success, ) = to.call{value: amount}("");
+        require(success, "Failed to send ether");
+    }
+
+    // view
+    function tokenURI(uint256 tokenId)
+        public
+        view
+        override(ERC721A)
+        returns (string memory)
+    {
+        return
+            string(abi.encodePacked(baseTokenURI, Strings.toString(tokenId)));
+    }
+}
