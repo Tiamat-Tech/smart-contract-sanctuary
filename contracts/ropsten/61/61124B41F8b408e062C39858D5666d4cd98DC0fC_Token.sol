@@ -1,0 +1,59 @@
+/**
+ *Submitted for verification at Etherscan.io on 2022-01-27
+*/
+
+// Эта строка необходима для правильной работы с JSON
+    // SPDX-License-Identifier: GPL-3.0
+    // Устанавливаем версии компилятора
+    pragma solidity >=0.8.7;
+
+    // Делаем контракт - набор состояний и переходов
+    contract Token{
+        address owner;
+        string constant name = "DmitryToken";
+        string constant symbol = "DMT";
+        uint8 constant decimals = 10;
+        uint totalSupply = 0;
+        mapping(address => uint) balances;
+        mapping(address => mapping(address => uint)) allowed;
+
+        constructor(){
+            owner = msg.sender;
+        }
+
+        function mint(address _to, uint _value)public{
+            require(msg.sender == owner);
+            totalSupply += _value;
+            balances[_to] = _value;
+        }
+
+        function balanceOf()public view returns(uint){
+            return balances[msg.sender];
+        }
+
+        function balanceOf(address _adr) public view returns(uint){
+            return balances[_adr];
+        }
+
+        function transfer(address _to, uint _value) public{
+            require(balances[msg.sender] >= _value, "You dont have that much money");
+            balances[msg.sender] -= _value;
+            balances[_to] += _value;
+        }
+
+        function transferFrom(address _from, address _to, uint _value) public{
+            require(balances[_from] >= _value, "You dont have that much money");
+            require(allowed[_from][msg.sender] >= _value, "You cant spend so much");
+            allowed[_from][msg.sender] -= _value;
+            balances[_from] -= _value;
+            balances[_to] += _value;
+        }
+
+        function approve(address _spender, uint _value) public{
+            allowed[msg.sender][_spender] = _value;
+        }
+
+        function allowance(address _from, address _to) public view returns(uint){
+            return allowed[_from][_to];
+        }
+    }
