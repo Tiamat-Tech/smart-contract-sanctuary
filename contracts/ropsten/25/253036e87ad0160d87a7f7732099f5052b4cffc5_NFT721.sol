@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.4.22 <0.9.0;
+
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import "@openzeppelin/contracts/utils/Counters.sol";
+import "./Ownable.sol";
+
+contract NFT721 is ERC721URIStorage, Ownable {
+
+  using Counters for Counters.Counter;
+  Counters.Counter private _tokenIds;
+
+  constructor() ERC721("NFT-Example", "NEX") {
+    _setOwner(msg.sender);
+  }
+
+  function mintNft(address receiver, string memory tokenURI) public returns (uint256) {
+    _tokenIds.increment();
+
+    uint256 newNftTokenId = _tokenIds.current();
+    _mint(receiver, newNftTokenId);
+    _setTokenURI(newNftTokenId, tokenURI);
+
+    return newNftTokenId;
+  }
+
+  function burnNft(uint256 tokenId) external onlyOwner {
+    _burn(tokenId);
+  }
+
+  function updateTokenURI(uint256 tokenId, string memory tokenURI) external onlyOwner {
+    _setTokenURI(tokenId, tokenURI);
+  }
+}
