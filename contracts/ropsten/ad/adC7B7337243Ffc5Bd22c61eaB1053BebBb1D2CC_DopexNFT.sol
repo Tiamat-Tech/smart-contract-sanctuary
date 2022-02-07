@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.2;
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Counters.sol";
+
+contract DopexNFT is ERC721, ERC721Enumerable, Ownable {
+    using Counters for Counters.Counter;
+    using Strings for uint256;
+
+    Counters.Counter private _tokenIdCounter;
+    uint256 public mintRate = 0.05 ether;
+    uint256 public MAX_SUPPLY = 20;
+    uint256 public MAX_MINT = 5;
+    uint256 public OWNER_PRE_MINT = 5;
+    string public baseURI;
+    uint256[] public mintIDremaining;
+    mapping(address => uint256[]) public ownerMints;
+    uint private randNonce = 0;
+    bool changeBaseURI = true;
+    uint256 public mintTime = 1644249600;
+    bool onwerAllowedMint = true;
+    bool public mintOn = true;
+
+    constructor() ERC721("Dopex NFT", "DopexNFT") {
+        for (uint256 i = 0; i < MAX_SUPPLY; i++) {
+            mintIDremaining.push(i+1);}
+        }
+
+    function OnwerMint() public onlyOwner {
+        require(onwerAllowedMint, 'Owner already minted');
+        require(OWNER_PRE_MINT + _tokenIdCounter.current() <= MAX_SUPPLY, "Can not mint more than total maximum supply");
+        for (uint256 i = 0; i < OWNER_PRE_MINT; i++) {
+            uint256 randomID = random(mintIDremaining.length);
+            uint256 randomMintID = mintIDremaining[randomID];
+            _safeMint(msg.sender, randomMintID);
+            removeID(randomID);
+            _tokenIdCounter.increment();
+            ownerMints[msg.sender].push(randomMintID);
+            }
+        onwerAllowedMint = false;
+    }
+
+    function withdraw() public onlyOwner {
+        require(address(this).balance > 0);
+        payable(owner()).transfer(address(this).balance);
+    }
+
+    function changeMint(bool _mintStatus) public onlyOwner {
+        mintOn = _mintStatus;
+    }
+
+    function disableChangeBaseURI() public onlyOwner {
+        changeBaseURI = false;
+    }
+
+    function setBaseURI(string memory _newBaseURI) public onlyOwner {
+        baseURI = _newBaseURI;
+    }
+
+    function _baseURI() internal view virtual override returns (string memory) {
+        return baseURI;
+    }
+
+    function tokenURI(uint256 _tokenURI) public view virtual override returns (string memory){
+        require(_exists(_tokenURI),"ERC721Metadata: URI query for nonexistent token");
+
+        string memory base = _baseURI();
+
+        // If there is no base URI, return the token URI.
+        if (bytes(base).length == 0) {
+            return _tokenURI.toString();
+        }
+
+        return string(abi.encodePacked(base, "/", _tokenURI.toString()));
+    }
+
+    function getOwnerMints(address _ownerAddress) public view returns (uint256[] memory){
+        return ownerMints[_ownerAddress];
+    }
+
+    function random(uint256 n) private returns (uint256) {
+        randNonce ++;
+        uint256 randomnumber = uint256(keccak256(
+            abi.encodePacked(_tokenIdCounter.current(), randNonce, msg.sender, block.difficulty, block.timestamp))) % n;
+        return randomnumber;
+    }
+
+    function removeID(uint256 _index) private {
+        require(_index < mintIDremaining.length);
+        mintIDremaining[_index] = mintIDremaining[mintIDremaining.length - 1];
+        mintIDremaining.pop();
+    }
+
+    function safeMint(uint256 _mintNumber) public payable {
+        require(mintOn);
+        require(block.timestamp >= mintTime, "Mint has not yet started");
+        require(_mintNumber > 0, "Need to mint positive number of tokens");
+        require(_mintNumber <= MAX_MINT, "Attempting to mint more than mint limit");
+        require(_mintNumber + _tokenIdCounter.current() <= MAX_SUPPLY, "Can not mint more than total maximum supply");
+        require(msg.value >= mintRate * _mintNumber, "Not enough eth sent");
+
+        for (uint256 i = 0; i < _mintNumber; i++) {
+            uint256 randomID = random(mintIDremaining.length);
+            uint256 randomMintID = mintIDremaining[randomID];
+            removeID(randomID);
+            _tokenIdCounter.increment();
+            _safeMint(msg.sender, randomMintID);
+            ownerMints[msg.sender].push(randomMintID);
+            }
+        }
+
+
+    // The following functions are overrides required by Solidity.
+    function _beforeTokenTransfer(address from, address to, uint256 tokenId) internal override(ERC721, ERC721Enumerable) {
+        super._beforeTokenTransfer(from, to, tokenId);
+    }
+
+    function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC721Enumerable) returns (bool){
+        return super.supportsInterface(interfaceId);
+    }
+
+}
