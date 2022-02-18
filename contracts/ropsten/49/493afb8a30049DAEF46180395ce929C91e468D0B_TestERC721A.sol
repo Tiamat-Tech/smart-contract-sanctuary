@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.4;
+
+import "erc721a/contracts/ERC721A.sol";
+import "./Mintable.sol";
+
+contract TestERC721A is ERC721A, Mintable {
+  string private customBaseURI;
+
+  constructor(
+      address _owner,
+      string memory _name,
+      string memory _symbol,
+      address _imx
+  ) ERC721A(_name, _symbol) Mintable(_owner, _imx) {}
+
+    function _mintFor(
+        address user,
+        uint256 id,
+        bytes memory
+    ) internal override {
+        _safeMint(user, id);
+    }
+    
+    function setBaseURI(string memory customBaseURI_) external {
+        customBaseURI = customBaseURI_;
+    }
+
+    function _baseURI() internal view virtual override returns (string memory) {
+        return customBaseURI;
+    }
+
+}
