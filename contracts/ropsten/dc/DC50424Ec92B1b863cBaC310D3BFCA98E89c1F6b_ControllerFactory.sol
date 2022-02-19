@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.0;
+
+import { Controller } from './Controller.sol';
+
+contract ControllerFactory {
+
+    mapping(address => address) controllers;
+
+    event newController(address controller, address owner);
+
+    function deployController() public returns(address controllerAddress) {
+
+        require(controllers[msg.sender] == address(0), "You already own a controller");
+
+        Controller controller = new Controller(msg.sender);
+
+        controllers[msg.sender] == address(controller);
+
+        emit newController(address(controller), msg.sender);
+
+        return address(controller);
+    }
+
+    function getMyController() external view returns(address controller) {
+        return controllers[msg.sender];
+    }
+
+
+}
